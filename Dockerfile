@@ -20,7 +20,7 @@ RUN case "$TARGETARCH" in \
       arm64) codex_target="aarch64-unknown-linux-musl" ;; \
       *) echo "Unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
     esac && \
-    curl -sSL \
+    curl -fsSL \
       "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-${codex_target}.tar.gz" \
       -o /tmp/codex.tar.gz && \
     tar -xzf /tmp/codex.tar.gz -C /tmp && \
