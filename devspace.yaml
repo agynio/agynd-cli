@@ -1,0 +1,129 @@
+version: v2beta1
+
+vars:
+  AGYND_NAMESPACE: platform
+  DEV_IMAGE: ghcr.io/agynio/devcontainer-go:1
+
+functions:
+  disable_argocd_sync: |-
+    if kubectl get application agynd -n argocd >/dev/null 2>&1; then
+      echo "Disabling ArgoCD auto-sync for agynd..."
+      kubectl patch application agynd -n argocd \
+        --type merge \
+        -p '{"spec":{"syncPolicy":{"automated":null}}}'
+      echo "ArgoCD auto-sync disabled."
+    else
+      echo "WARNING: ArgoCD Application 'agynd' not found in argocd namespace."
+    fi
+  restore_argocd_sync: &restore_argocd_sync |-
+    if kubectl get application agynd -n argocd >/dev/null 2>&1; then
+      echo "Re-enabling ArgoCD auto-sync for agynd..."
+      kubectl patch application agynd -n argocd \
+        --type merge \
+        -p '{"spec":{"syncPolicy":{"automated":{"prune":true,"selfHeal":true}}}}'
+      echo "ArgoCD auto-sync restored."
+    else
+      echo "WARNING: ArgoCD Application 'agynd' not found in argocd namespace."
+    fi
+  patch_deployment: |-
+    echo "Patching agynd deployment for DevSpace..."
+    kubectl patch deployment agynd-agynd -n ${AGYND_NAMESPACE} --type strategic --patch "$(cat <<'EOF'
+    spec:
+      template:
+        spec:
+          securityContext:
+            runAsUser: 1000
+            fsGroup: 1000
+          initContainers: []
+          volumes:
+            - name: data
+              emptyDir: {}
+          containers:
+            - name: agynd
+              image: ghcr.io/agynio/devcontainer-go:1 # keep in sync with DEV_IMAGE
+              workingDir: /opt/app/data
+              command:
+                - sh
+                - -c
+                - |
+                  set -eu
+                  elapsed=0
+                  while [ ! -f /opt/app/data/go.mod ]; do
+                    sleep 1; elapsed=$((elapsed + 1))
+                    [ "$elapsed" -ge 120 ] && { echo "ERROR: sync timeout" >&2; exit 1; }
+                  done
+                  buf generate buf.build/agynio/api \
+                    --path agynio/api/threads/v1 \
+                    --path agynio/api/notifications/v1 \
+                    --path agynio/api/teams/v1
+                  exec go run ./cmd/agynd
+              volumeMounts:
+                - name: data
+                  mountPath: /opt/app/data
+              resources:
+                requests:
+                  cpu: 500m
+                  memory: 1Gi
+                limits:
+                  cpu: "2"
+                  memory: 4Gi
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1000
+                runAsGroup: 1000
+                readOnlyRootFilesystem: false
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                seccompProfile:
+                  type: RuntimeDefault
+    EOF
+    )"
+
+pipelines:
+  dev:
+    flags:
+      - name: watch
+        short: w
+        description: "Keep DevSpace running and stream logs"
+    run: |-
+      disable_argocd_sync
+      patch_deployment
+      if [ "$(get_flag "watch")" == "true" ]; then
+        start_dev --disable-pod-replace agynd
+      else
+        start_dev --disable-pod-replace agynd
+        sleep 10
+        echo "Dev environment ready. Stopping dev session."
+        stop_dev agynd
+      fi
+
+hooks:
+  - name: restore-argocd-auto-sync
+    events:
+      - after:dev:agynd
+    command: bash
+    args:
+      - -c
+      - *restore_argocd_sync
+
+dev:
+  agynd:
+    namespace: ${AGYND_NAMESPACE}
+    labelSelector:
+      app.kubernetes.io/name: agynd
+      app.kubernetes.io/instance: agynd
+    containers:
+      agynd:
+        container: agynd
+        sync:
+          - path: ./:/opt/app/data
+            excludePaths:
+              - .git/
+              - .devspace/
+              - /.gen/
+              - /tmp/
+            uploadExcludePaths:
+              - .git/
+              - .devspace/
+              - /.gen/
