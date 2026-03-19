@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/agynio/agynd-cli/pkg/codex"
+	codex "github.com/agynio/codex-sdk-go"
 )
 
 type Bridge struct {

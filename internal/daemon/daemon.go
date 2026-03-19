@@ -13,7 +13,7 @@ import (
 	"github.com/agynio/agynd-cli/internal/config"
 	"github.com/agynio/agynd-cli/internal/platform"
 	"github.com/agynio/agynd-cli/internal/subscriber"
-	"github.com/agynio/agynd-cli/pkg/codex"
+	codex "github.com/agynio/codex-sdk-go"
 )
 
 const (
