@@ -37,7 +37,6 @@ type ThreadStartParams struct {
 	Personality           *Personality       `json:"personality,omitempty"`
 	Ephemeral             *bool              `json:"ephemeral,omitempty"`
 	Config                map[string]any     `json:"config,omitempty"`
-	ServiceName           *string            `json:"serviceName,omitempty"`
 }
 
 type ThreadStartResponse struct {

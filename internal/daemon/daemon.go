@@ -4,14 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	notificationsv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/notifications/v1"
 	teamsv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/teams/v1"
-	threadsv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/threads/v1"
 	"github.com/agynio/agynd-cli/internal/codexbridge"
 	"github.com/agynio/agynd-cli/internal/config"
 	"github.com/agynio/agynd-cli/internal/platform"
@@ -19,92 +16,78 @@ import (
 	"github.com/agynio/agynd-cli/pkg/codex"
 )
 
-const pageSize int32 = 100
+const (
+	pageSize              int32 = 100
+	pageTimeout                 = 30 * time.Second
+	turnStartTimeout            = 5 * time.Minute
+	turnCompletionTimeout       = 5 * time.Minute
+	messagePublishTimeout       = 15 * time.Second
+	messageAckTimeout           = 15 * time.Second
+)
 
 type Daemon struct {
-	cfg           config.Config
-	threadsConn   platformConn
-	notifsConn    platformConn
-	teamsConn     platformConn
-	threads       threadsv1.ThreadsServiceClient
-	notifications notificationsv1.NotificationsServiceClient
-	teams         teamsv1.TeamsServiceClient
-	subscriber    *subscriber.Subscriber
-	codex         *codex.Client
-	mapping       *codexbridge.ThreadMapping
-	agent         *teamsv1.Agent
+	cfg        config.Config
+	conns      *platform.Connections
+	threads    *platform.Threads
+	teams      teamsv1.TeamsServiceClient
+	subscriber *subscriber.Subscriber
+	consumer   *platform.Consumer
+	codex      *codex.Client
+	mapping    *codexbridge.ThreadMapping
+	tracker    *codexbridge.TurnTracker
+	agent      *teamsv1.Agent
 
 	syncMu sync.Mutex
 }
 
-type platformConn interface {
-	Close() error
-}
-
 func New(ctx context.Context, cfg config.Config, version string) (*Daemon, error) {
-	threadsConn, err := platform.Dial(ctx, cfg.ThreadsAddress)
+	conns, err := platform.DialConnections(ctx, cfg.ThreadsAddress, cfg.NotificationsAddress, cfg.TeamsAddress)
 	if err != nil {
-		return nil, fmt.Errorf("dial threads: %w", err)
-	}
-	notifsConn, err := platform.Dial(ctx, cfg.NotificationsAddress)
-	if err != nil {
-		_ = threadsConn.Close()
-		return nil, fmt.Errorf("dial notifications: %w", err)
-	}
-	teamsConn, err := platform.Dial(ctx, cfg.TeamsAddress)
-	if err != nil {
-		_ = threadsConn.Close()
-		_ = notifsConn.Close()
-		return nil, fmt.Errorf("dial teams: %w", err)
+		return nil, err
 	}
 
-	threadsClient := threadsv1.NewThreadsServiceClient(threadsConn)
-	notificationsClient := notificationsv1.NewNotificationsServiceClient(notifsConn)
-	teamsClient := teamsv1.NewTeamsServiceClient(teamsConn)
+	threadsClient := platform.NewThreads(conns.Threads)
+	notificationsClient := platform.NewNotifications(conns.Notifications)
+	teamsClient := teamsv1.NewTeamsServiceClient(conns.Teams)
 
 	agentResp, err := teamsClient.GetAgent(ctx, &teamsv1.GetAgentRequest{Id: cfg.AgentID.String()})
 	if err != nil {
-		_ = threadsConn.Close()
-		_ = notifsConn.Close()
-		_ = teamsConn.Close()
+		conns.Close()
 		return nil, fmt.Errorf("get agent: %w", err)
 	}
 	agent := agentResp.GetAgent()
 	if agent == nil {
-		_ = threadsConn.Close()
-		_ = notifsConn.Close()
-		_ = teamsConn.Close()
+		conns.Close()
 		return nil, fmt.Errorf("agent not found")
 	}
 
-	mapping := codexbridge.NewThreadMapping()
-	bridge := codexbridge.New(ctx, threadsClient, cfg.AgentID.String(), mapping)
+	tracker := codexbridge.NewTurnTracker()
+	bridge := codexbridge.New(tracker)
+	threadsMapping := codexbridge.NewThreadMapping()
 	codexClient, err := codex.NewClient(ctx,
 		codex.WithBinary(cfg.CodexBinary),
 		codex.WithWorkDir(cfg.WorkDir),
 		codex.WithNotificationHandler(bridge),
 		codex.WithApprovalHandler(codex.AutoApprovalHandler{}),
 		codex.WithClientInfo("agynd", version),
+		codex.WithEnv(map[string]string{"OPENAI_API_KEY": cfg.OpenAIAPIKey}),
 	)
 	if err != nil {
-		_ = threadsConn.Close()
-		_ = notifsConn.Close()
-		_ = teamsConn.Close()
+		conns.Close()
 		return nil, err
 	}
 
 	return &Daemon{
-		cfg:           cfg,
-		threadsConn:   threadsConn,
-		notifsConn:    notifsConn,
-		teamsConn:     teamsConn,
-		threads:       threadsClient,
-		notifications: notificationsClient,
-		teams:         teamsClient,
-		subscriber:    subscriber.New(notificationsClient),
-		codex:         codexClient,
-		mapping:       mapping,
-		agent:         agent,
+		cfg:        cfg,
+		conns:      conns,
+		threads:    threadsClient,
+		teams:      teamsClient,
+		subscriber: subscriber.New(notificationsClient, cfg.AgentID.String()),
+		consumer:   platform.NewConsumer(threadsClient, pageSize, pageTimeout),
+		codex:      codexClient,
+		mapping:    threadsMapping,
+		tracker:    tracker,
+		agent:      agent,
 	}, nil
 }
 
@@ -112,14 +95,8 @@ func (d *Daemon) Close() {
 	if d.codex != nil {
 		_ = d.codex.Close()
 	}
-	if d.threadsConn != nil {
-		_ = d.threadsConn.Close()
-	}
-	if d.notifsConn != nil {
-		_ = d.notifsConn.Close()
-	}
-	if d.teamsConn != nil {
-		_ = d.teamsConn.Close()
+	if d.conns != nil {
+		d.conns.Close()
 	}
 }
 
@@ -150,51 +127,15 @@ func (d *Daemon) syncMessages(ctx context.Context) error {
 	d.syncMu.Lock()
 	defer d.syncMu.Unlock()
 
-	token := ""
-	for {
-		pageCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		resp, err := d.threads.GetUnackedMessages(pageCtx, &threadsv1.GetUnackedMessagesRequest{
-			ParticipantId: d.cfg.AgentID.String(),
-			PageSize:      pageSize,
-			PageToken:     token,
-		})
-		cancel()
-		if err != nil {
-			return fmt.Errorf("get unacked messages: %w", err)
-		}
-		messages := resp.GetMessages()
-		if len(messages) > 1 {
-			sort.Slice(messages, func(i, j int) bool {
-				left := messages[i].GetCreatedAt()
-				right := messages[j].GetCreatedAt()
-				if left == nil || right == nil {
-					return messages[i].GetId() < messages[j].GetId()
-				}
-				if left.Seconds == right.Seconds {
-					return left.Nanos < right.Nanos
-				}
-				return left.Seconds < right.Seconds
-			})
-		}
-		for _, message := range messages {
-			if message == nil {
-				continue
-			}
-			if err := d.handleMessage(ctx, message); err != nil {
-				return err
-			}
-		}
-		token = resp.GetNextPageToken()
-		if token == "" {
-			return nil
-		}
-	}
+	return d.consumer.Sync(ctx, d.cfg.AgentID.String(), func(message platform.Message) error {
+		return d.handleMessage(ctx, message)
+	})
 }
 
-func (d *Daemon) handleMessage(ctx context.Context, message *threadsv1.Message) error {
-	threadID := strings.TrimSpace(message.GetThreadId())
+func (d *Daemon) handleMessage(ctx context.Context, message platform.Message) error {
+	threadID := strings.TrimSpace(message.ThreadID)
 	if threadID == "" {
-		return fmt.Errorf("message %s missing thread id", message.GetId())
+		return fmt.Errorf("message %s missing thread id", message.ID)
 	}
 	inputText, err := buildInput(message)
 	if err != nil {
@@ -208,8 +149,8 @@ func (d *Daemon) handleMessage(ctx context.Context, message *threadsv1.Message) 
 		}
 		d.mapping.Set(threadID, codexThreadID)
 	}
-	turnCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	_, err = d.codex.TurnStart(turnCtx, &codex.TurnStartParams{
+	turnCtx, cancel := context.WithTimeout(ctx, turnStartTimeout)
+	turnResp, err := d.codex.StartTurn(turnCtx, &codex.TurnStartParams{
 		ThreadID: codexThreadID,
 		Input:    []codex.UserInput{codex.NewTextUserInput(inputText)},
 	})
@@ -217,25 +158,47 @@ func (d *Daemon) handleMessage(ctx context.Context, message *threadsv1.Message) 
 	if err != nil {
 		return err
 	}
-	ackCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	_, err = d.threads.AckMessages(ackCtx, &threadsv1.AckMessagesRequest{
-		ParticipantId: d.cfg.AgentID.String(),
-		MessageIds:    []string{message.GetId()},
-	})
-	cancel()
-	if err != nil {
-		return fmt.Errorf("ack message %s: %w", message.GetId(), err)
+	turnID := strings.TrimSpace(turnResp.Turn.ID)
+	if turnID == "" {
+		return fmt.Errorf("codex turn id missing")
 	}
-	return nil
+	completionCh := d.tracker.Register(turnID)
+	completionCtx, cancel := context.WithTimeout(ctx, turnCompletionTimeout)
+	defer cancel()
+	select {
+	case result := <-completionCh:
+		if result.Err != nil {
+			return result.Err
+		}
+		if result.ThreadID != codexThreadID {
+			return fmt.Errorf("turn %s thread mismatch", turnID)
+		}
+		if strings.TrimSpace(result.Message) == "" {
+			return fmt.Errorf("turn %s completed with empty response", turnID)
+		}
+		publishCtx, cancel := context.WithTimeout(ctx, messagePublishTimeout)
+		_, err := d.threads.SendMessage(publishCtx, threadID, d.cfg.AgentID.String(), result.Message, nil)
+		cancel()
+		if err != nil {
+			return err
+		}
+		ackCtx, cancel := context.WithTimeout(ctx, messageAckTimeout)
+		err = d.threads.AckMessages(ackCtx, d.cfg.AgentID.String(), []string{message.ID})
+		cancel()
+		if err != nil {
+			return fmt.Errorf("ack message %s: %w", message.ID, err)
+		}
+		return nil
+	case <-completionCtx.Done():
+		d.tracker.Cancel(turnID)
+		return completionCtx.Err()
+	}
 }
 
 func (d *Daemon) startCodexThread(ctx context.Context) (string, error) {
 	params := &codex.ThreadStartParams{}
 	if model := strings.TrimSpace(d.agent.GetModel()); model != "" {
 		params.Model = &model
-	}
-	if name := strings.TrimSpace(d.agent.GetName()); name != "" {
-		params.ServiceName = &name
 	}
 	if role := strings.TrimSpace(d.agent.GetRole()); role != "" {
 		params.BaseInstructions = &role
@@ -246,20 +209,20 @@ func (d *Daemon) startCodexThread(ctx context.Context) (string, error) {
 	if d.cfg.WorkDir != "" {
 		params.Cwd = &d.cfg.WorkDir
 	}
-	resp, err := d.codex.ThreadStart(ctx, params)
+	resp, err := d.codex.StartThread(ctx, params)
 	if err != nil {
 		return "", fmt.Errorf("start codex thread: %w", err)
 	}
 	return resp.Thread.ID, nil
 }
 
-func buildInput(message *threadsv1.Message) (string, error) {
-	text := strings.TrimSpace(message.GetBody())
-	if text == "" && len(message.GetFileIds()) > 0 {
-		text = fmt.Sprintf("Received files: %s", strings.Join(message.GetFileIds(), ", "))
+func buildInput(message platform.Message) (string, error) {
+	text := strings.TrimSpace(message.Body)
+	if text == "" && len(message.FileIDs) > 0 {
+		text = fmt.Sprintf("Received files: %s", strings.Join(message.FileIDs, ", "))
 	}
 	if text == "" {
-		return "", fmt.Errorf("message %s has no content", message.GetId())
+		return "", fmt.Errorf("message %s has no content", message.ID)
 	}
 	return text, nil
 }

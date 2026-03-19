@@ -14,11 +14,12 @@ type Config struct {
 	ThreadsAddress       string
 	NotificationsAddress string
 	TeamsAddress         string
+	OpenAIAPIKey         string
 	CodexBinary          string
 	WorkDir              string
 }
 
-func Load() (Config, error) {
+func FromEnv() (Config, error) {
 	agentID, err := uuidutil.ParseUUID(strings.TrimSpace(os.Getenv("AGENT_ID")), "AGENT_ID")
 	if err != nil {
 		return Config{}, err
@@ -35,6 +36,10 @@ func Load() (Config, error) {
 	if teamsAddress == "" {
 		return Config{}, fmt.Errorf("TEAMS_ADDRESS is required")
 	}
+	openAIKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
+	if openAIKey == "" {
+		return Config{}, fmt.Errorf("OPENAI_API_KEY is required")
+	}
 
 	codexBinary := strings.TrimSpace(os.Getenv("CODEX_BINARY"))
 	if codexBinary == "" {
@@ -42,11 +47,7 @@ func Load() (Config, error) {
 	}
 	workDir := strings.TrimSpace(os.Getenv("WORKSPACE_DIR"))
 	if workDir == "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return Config{}, fmt.Errorf("determine working directory: %w", err)
-		}
-		workDir = cwd
+		workDir = "/workspace"
 	}
 
 	return Config{
@@ -54,6 +55,7 @@ func Load() (Config, error) {
 		ThreadsAddress:       threadsAddress,
 		NotificationsAddress: notificationsAddress,
 		TeamsAddress:         teamsAddress,
+		OpenAIAPIKey:         openAIKey,
 		CodexBinary:          codexBinary,
 		WorkDir:              workDir,
 	}, nil

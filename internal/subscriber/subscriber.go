@@ -7,18 +7,19 @@ import (
 	"log"
 	"time"
 
-	notificationsv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/notifications/v1"
+	"github.com/agynio/agynd-cli/internal/platform"
 )
 
 const messageCreatedEvent = "message.created"
 
 type Subscriber struct {
-	client notificationsv1.NotificationsServiceClient
-	wake   chan struct{}
+	client  *platform.Notifications
+	agentID string
+	wake    chan struct{}
 }
 
-func New(client notificationsv1.NotificationsServiceClient) *Subscriber {
-	return &Subscriber{client: client, wake: make(chan struct{}, 1)}
+func New(client *platform.Notifications, agentID string) *Subscriber {
+	return &Subscriber{client: client, agentID: agentID, wake: make(chan struct{}, 1)}
 }
 
 func (s *Subscriber) Run(ctx context.Context) error {
@@ -27,7 +28,7 @@ func (s *Subscriber) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		stream, err := s.client.Subscribe(ctx, &notificationsv1.SubscribeRequest{})
+		stream, err := s.client.Subscribe(ctx, s.agentID)
 		if err != nil {
 			log.Printf("subscriber: subscribe failed: %v", err)
 			if err := waitWithBackoff(ctx, backoff); err != nil {

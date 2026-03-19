@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"sort"
@@ -69,6 +70,12 @@ func NewClient(ctx context.Context, opts ...Option) (*Client, error) {
 	if options.clientInfo.Name == "" || options.clientInfo.Version == "" {
 		return nil, fmt.Errorf("client info must include name and version")
 	}
+	if options.notificationHandler == nil {
+		return nil, fmt.Errorf("notification handler is required")
+	}
+	if options.approvalHandler == nil {
+		return nil, fmt.Errorf("approval handler is required")
+	}
 	if len(options.args) == 0 {
 		options.args = []string{"app-server"}
 	}
@@ -109,13 +116,6 @@ func NewClient(ctx context.Context, opts ...Option) (*Client, error) {
 		done:                make(chan struct{}),
 		ctx:                 clientCtx,
 		cancel:              cancel,
-	}
-
-	if client.notificationHandler == nil {
-		client.notificationHandler = NopNotificationHandler{}
-	}
-	if client.approvalHandler == nil {
-		client.approvalHandler = AutoApprovalHandler{}
 	}
 
 	if err := cmd.Start(); err != nil {
@@ -258,6 +258,7 @@ func (c *Client) readLoop() {
 		}
 		var msg rpcMessage
 		if err := json.Unmarshal(line, &msg); err != nil {
+			log.Printf("codex: invalid JSON from server: %v (line: %s)", err, string(line))
 			continue
 		}
 		switch {
@@ -320,65 +321,80 @@ func (c *Client) handleResponse(msg rpcMessage) {
 }
 
 func (c *Client) handleNotification(msg rpcMessage) {
-	if c.notificationHandler == nil {
-		return
-	}
 	params := msg.Params
 	switch msg.Method {
 	case "turn/started":
 		var payload TurnStartedNotification
-		if err := json.Unmarshal(params, &payload); err == nil {
-			c.notificationHandler.OnTurnStarted(&payload)
-			return
+		if err := json.Unmarshal(params, &payload); err != nil {
+			log.Printf("codex: failed to decode turn/started: %v", err)
+			break
 		}
+		c.notificationHandler.OnTurnStarted(&payload)
+		return
 	case "turn/completed":
 		var payload TurnCompletedNotification
-		if err := json.Unmarshal(params, &payload); err == nil {
-			c.notificationHandler.OnTurnCompleted(&payload)
-			return
+		if err := json.Unmarshal(params, &payload); err != nil {
+			log.Printf("codex: failed to decode turn/completed: %v", err)
+			break
 		}
+		c.notificationHandler.OnTurnCompleted(&payload)
+		return
 	case "item/started":
 		var payload ItemStartedNotification
-		if err := json.Unmarshal(params, &payload); err == nil {
-			c.notificationHandler.OnItemStarted(&payload)
-			return
+		if err := json.Unmarshal(params, &payload); err != nil {
+			log.Printf("codex: failed to decode item/started: %v", err)
+			break
 		}
+		c.notificationHandler.OnItemStarted(&payload)
+		return
 	case "item/completed":
 		var payload ItemCompletedNotification
-		if err := json.Unmarshal(params, &payload); err == nil {
-			c.notificationHandler.OnItemCompleted(&payload)
-			return
+		if err := json.Unmarshal(params, &payload); err != nil {
+			log.Printf("codex: failed to decode item/completed: %v", err)
+			break
 		}
+		c.notificationHandler.OnItemCompleted(&payload)
+		return
 	case "item/agentMessage/delta":
 		var payload AgentMessageDeltaNotification
-		if err := json.Unmarshal(params, &payload); err == nil {
-			c.notificationHandler.OnAgentMessageDelta(&payload)
-			return
+		if err := json.Unmarshal(params, &payload); err != nil {
+			log.Printf("codex: failed to decode item/agentMessage/delta: %v", err)
+			break
 		}
+		c.notificationHandler.OnAgentMessageDelta(&payload)
+		return
 	case "item/commandExecution/outputDelta":
 		var payload CommandExecutionOutputDeltaNotification
-		if err := json.Unmarshal(params, &payload); err == nil {
-			c.notificationHandler.OnCommandOutputDelta(&payload)
-			return
+		if err := json.Unmarshal(params, &payload); err != nil {
+			log.Printf("codex: failed to decode item/commandExecution/outputDelta: %v", err)
+			break
 		}
+		c.notificationHandler.OnCommandOutputDelta(&payload)
+		return
 	case "item/fileChange/outputDelta":
 		var payload FileChangeOutputDeltaNotification
-		if err := json.Unmarshal(params, &payload); err == nil {
-			c.notificationHandler.OnFileChangeDelta(&payload)
-			return
+		if err := json.Unmarshal(params, &payload); err != nil {
+			log.Printf("codex: failed to decode item/fileChange/outputDelta: %v", err)
+			break
 		}
+		c.notificationHandler.OnFileChangeDelta(&payload)
+		return
 	case "thread/tokenUsage/updated":
 		var payload ThreadTokenUsageUpdatedNotification
-		if err := json.Unmarshal(params, &payload); err == nil {
-			c.notificationHandler.OnTokenUsageUpdated(&payload)
-			return
+		if err := json.Unmarshal(params, &payload); err != nil {
+			log.Printf("codex: failed to decode thread/tokenUsage/updated: %v", err)
+			break
 		}
+		c.notificationHandler.OnTokenUsageUpdated(&payload)
+		return
 	case "error":
 		var payload ErrorNotification
-		if err := json.Unmarshal(params, &payload); err == nil {
-			c.notificationHandler.OnError(&payload)
-			return
+		if err := json.Unmarshal(params, &payload); err != nil {
+			log.Printf("codex: failed to decode error notification: %v", err)
+			break
 		}
+		c.notificationHandler.OnError(&payload)
+		return
 	}
 	c.notificationHandler.OnNotification(msg.Method, params)
 }
@@ -386,9 +402,6 @@ func (c *Client) handleNotification(msg rpcMessage) {
 func (c *Client) handleServerRequest(msg rpcMessage) {
 	if msg.ID == nil {
 		return
-	}
-	if c.approvalHandler == nil {
-		c.approvalHandler = AutoApprovalHandler{}
 	}
 	var (
 		result any
