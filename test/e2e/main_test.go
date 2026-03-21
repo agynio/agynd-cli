@@ -3,17 +3,15 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/http/httputil"
-	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -105,24 +103,7 @@ func TestCodexClientHelloResponse(t *testing.T) {
 func startTestProxy(t *testing.T) string {
 	t.Helper()
 
-	target, err := url.Parse(testLLMBaseURL)
-	if err != nil {
-		t.Fatalf("parse testllm base url: %v", err)
-	}
-
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	proxy.Director = func(r *http.Request) {
-		r.URL.Scheme = target.Scheme
-		r.URL.Host = target.Host
-		r.Host = target.Host
-		relativePath := strings.TrimPrefix(r.URL.Path, "/v1")
-		if relativePath == "" {
-			r.URL.Path = target.Path
-			return
-		}
-		r.URL.Path = strings.TrimSuffix(target.Path, "/") + relativePath
-	}
-
+	client := &http.Client{Timeout: 30 * time.Second}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/models", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -132,11 +113,75 @@ func startTestProxy(t *testing.T) string {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"data":[]}`)
 	})
-	mux.Handle("/v1/", proxy)
+	mux.HandleFunc("/v1/responses", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "read request body", http.StatusBadRequest)
+			return
+		}
+		if err := r.Body.Close(); err != nil {
+			http.Error(w, "close request body", http.StatusBadRequest)
+			return
+		}
+
+		var payload map[string]any
+		if err := json.Unmarshal(body, &payload); err != nil {
+			http.Error(w, "invalid json payload", http.StatusBadRequest)
+			return
+		}
+		stripInputToLastItem(payload)
+		normalized, err := json.Marshal(payload)
+		if err != nil {
+			http.Error(w, "normalize payload", http.StatusBadRequest)
+			return
+		}
+
+		forwardReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, testLLMBaseURL+"/responses", bytes.NewReader(normalized))
+		if err != nil {
+			http.Error(w, "build upstream request", http.StatusInternalServerError)
+			return
+		}
+		forwardReq.Header = r.Header.Clone()
+		forwardReq.Header.Set("Content-Type", "application/json")
+		forwardReq.Header.Del("Content-Length")
+
+		resp, err := client.Do(forwardReq)
+		if err != nil {
+			http.Error(w, "upstream request failed", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+
+		for key, values := range resp.Header {
+			for _, value := range values {
+				w.Header().Add(key, value)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		if _, err := io.Copy(w, resp.Body); err != nil {
+			t.Logf("copy upstream response: %v", err)
+		}
+	})
 
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	return server.URL
+}
+
+func stripInputToLastItem(payload map[string]any) {
+	inputRaw, ok := payload["input"]
+	if !ok {
+		return
+	}
+	items, ok := inputRaw.([]any)
+	if !ok || len(items) == 0 {
+		return
+	}
+	payload["input"] = []any{items[len(items)-1]}
 }
 
 func writeCodexConfig(t *testing.T, dir, baseURL string) {
