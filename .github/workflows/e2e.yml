@@ -1,13 +1,12 @@
-name: CI
+name: E2E
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
 
 jobs:
-  build:
+  e2e:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,8 +28,10 @@ jobs:
             --path agynio/api/notifications/v1 \
             --path agynio/api/agents/v1
 
-      - name: Run tests
-        run: go test ./...
+      - name: Install Codex CLI
+        run: npm install -g @openai/codex
 
-      - name: Build
-        run: go build ./...
+      - name: Run e2e tests
+        run: go test -v -count=1 -tags e2e ./test/e2e/
+        env:
+          OPENAI_API_KEY: test-key
