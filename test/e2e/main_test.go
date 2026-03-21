@@ -12,14 +12,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/agynio/codex-sdk-go"
 )
 
-const testLLMURL = "https://testllm.dev/v1/org/agynio/suite/codex/responses"
+const testLLMBaseURL = "https://testllm.dev/v1/org/agynio/suite/codex"
 
 type turnCompletedHandler struct {
 	codex.NopNotificationHandler
@@ -31,48 +30,6 @@ func (h *turnCompletedHandler) OnTurnCompleted(notification *codex.TurnCompleted
 	case h.completed <- notification:
 	default:
 	}
-}
-
-type responseRef struct {
-	ID string `json:"id"`
-}
-
-type responseCreatedEvent struct {
-	Type     string      `json:"type"`
-	Response responseRef `json:"response"`
-}
-
-type responseOutputItemDoneEvent struct {
-	Type        string          `json:"type"`
-	OutputIndex int             `json:"output_index"`
-	Item        json.RawMessage `json:"item"`
-}
-
-type responseOutputItemAddedEvent struct {
-	Type        string          `json:"type"`
-	OutputIndex int             `json:"output_index"`
-	Item        json.RawMessage `json:"item"`
-}
-
-type responseOutputTextDeltaEvent struct {
-	Type         string `json:"type"`
-	OutputIndex  int    `json:"output_index"`
-	ContentIndex int    `json:"content_index"`
-	Delta        string `json:"delta"`
-}
-
-type responseCompletedEvent struct {
-	Type     string         `json:"type"`
-	Response map[string]any `json:"response"`
-}
-
-type responseOutputItem struct {
-	Content []responseOutputContent `json:"content"`
-}
-
-type responseOutputContent struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
 }
 
 func TestCodexClientHelloResponse(t *testing.T) {
@@ -176,128 +133,37 @@ func startTestProxy(t *testing.T) string {
 			http.Error(w, "invalid json payload", http.StatusBadRequest)
 			return
 		}
-		if err := normalizeInputContent(payload); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
+		stripInputToLastItem(payload)
 		normalized, err := json.Marshal(payload)
 		if err != nil {
 			http.Error(w, "normalize payload", http.StatusBadRequest)
 			return
 		}
 
-		forwardReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, testLLMURL, bytes.NewReader(normalized))
+		forwardReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, testLLMBaseURL+"/responses", bytes.NewReader(normalized))
 		if err != nil {
 			http.Error(w, "build upstream request", http.StatusInternalServerError)
 			return
 		}
+		forwardReq.Header = r.Header.Clone()
 		forwardReq.Header.Set("Content-Type", "application/json")
-		if auth := r.Header.Get("Authorization"); auth != "" {
-			forwardReq.Header.Set("Authorization", auth)
-		}
+		forwardReq.Header.Del("Content-Length")
 
 		resp, err := client.Do(forwardReq)
 		if err != nil {
 			http.Error(w, "upstream request failed", http.StatusBadGateway)
 			return
 		}
-		respBody, err := io.ReadAll(resp.Body)
-		if closeErr := resp.Body.Close(); closeErr != nil && err == nil {
-			err = closeErr
-		}
-		if err != nil {
-			http.Error(w, "read upstream response", http.StatusBadGateway)
-			return
-		}
-		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-			http.Error(w, fmt.Sprintf("upstream status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody))), http.StatusBadGateway)
-			return
-		}
+		defer resp.Body.Close()
 
-		var llmRespPayload map[string]any
-		if err := json.Unmarshal(respBody, &llmRespPayload); err != nil {
-			http.Error(w, "invalid upstream response", http.StatusBadGateway)
-			return
-		}
-		idValue, ok := llmRespPayload["id"].(string)
-		if !ok || idValue == "" {
-			http.Error(w, "upstream response missing id", http.StatusBadGateway)
-			return
-		}
-		outputRaw, ok := llmRespPayload["output"]
-		if !ok {
-			http.Error(w, "upstream response missing output", http.StatusBadGateway)
-			return
-		}
-		outputItems, ok := outputRaw.([]any)
-		if !ok {
-			http.Error(w, "invalid upstream output", http.StatusBadGateway)
-			return
-		}
-		rawOutput := make([]json.RawMessage, len(outputItems))
-		parsedOutput := make([]responseOutputItem, len(outputItems))
-		for index, item := range outputItems {
-			itemBytes, err := json.Marshal(item)
-			if err != nil {
-				http.Error(w, "invalid upstream output", http.StatusBadGateway)
-				return
-			}
-			rawOutput[index] = itemBytes
-			if err := json.Unmarshal(itemBytes, &parsedOutput[index]); err != nil {
-				http.Error(w, "invalid upstream output", http.StatusBadGateway)
-				return
+		for key, values := range resp.Header {
+			for _, value := range values {
+				w.Header().Add(key, value)
 			}
 		}
-
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.WriteHeader(http.StatusOK)
-
-		if err := writeEvent(w, "response.created", responseCreatedEvent{
-			Type:     "response.created",
-			Response: responseRef{ID: idValue},
-		}); err != nil {
-			return
-		}
-		for index, item := range rawOutput {
-			if err := writeEvent(w, "response.output_item.added", responseOutputItemAddedEvent{
-				Type:        "response.output_item.added",
-				OutputIndex: index,
-				Item:        item,
-			}); err != nil {
-				return
-			}
-			for contentIndex, content := range parsedOutput[index].Content {
-				if content.Type != "output_text" {
-					continue
-				}
-				if err := writeEvent(w, "response.output_text.delta", responseOutputTextDeltaEvent{
-					Type:         "response.output_text.delta",
-					OutputIndex:  index,
-					ContentIndex: contentIndex,
-					Delta:        content.Text,
-				}); err != nil {
-					return
-				}
-			}
-			if err := writeEvent(w, "response.output_item.done", responseOutputItemDoneEvent{
-				Type:        "response.output_item.done",
-				OutputIndex: index,
-				Item:        item,
-			}); err != nil {
-				return
-			}
-		}
-		llmRespPayload["usage"] = map[string]any{
-			"input_tokens":  0,
-			"output_tokens": 0,
-			"total_tokens":  0,
-		}
-		if err := writeEvent(w, "response.completed", responseCompletedEvent{
-			Type:     "response.completed",
-			Response: llmRespPayload,
-		}); err != nil {
-			return
+		w.WriteHeader(resp.StatusCode)
+		if _, err := io.Copy(w, resp.Body); err != nil {
+			t.Logf("copy upstream response: %v", err)
 		}
 	})
 
@@ -306,72 +172,16 @@ func startTestProxy(t *testing.T) string {
 	return server.URL
 }
 
-func normalizeInputContent(payload map[string]any) error {
+func stripInputToLastItem(payload map[string]any) {
 	inputRaw, ok := payload["input"]
 	if !ok {
-		return nil
+		return
 	}
-	inputItems, ok := inputRaw.([]any)
-	if !ok {
-		return nil
+	items, ok := inputRaw.([]any)
+	if !ok || len(items) == 0 {
+		return
 	}
-	if len(inputItems) == 0 {
-		return nil
-	}
-	message, ok := inputItems[len(inputItems)-1].(map[string]any)
-	if !ok {
-		return fmt.Errorf("input item must be object")
-	}
-	contentRaw, ok := message["content"]
-	if ok {
-		contentItems, ok := contentRaw.([]any)
-		if ok {
-			text, err := joinContentText(contentItems)
-			if err != nil {
-				return err
-			}
-			message["content"] = text
-		}
-	}
-	payload["input"] = []any{message}
-	return nil
-}
-
-func joinContentText(contentItems []any) (string, error) {
-	var builder strings.Builder
-	for _, item := range contentItems {
-		entry, ok := item.(map[string]any)
-		if !ok {
-			return "", fmt.Errorf("content item must be object")
-		}
-		textValue, ok := entry["text"]
-		if !ok {
-			return "", fmt.Errorf("content item missing text")
-		}
-		text, ok := textValue.(string)
-		if !ok {
-			return "", fmt.Errorf("content item text must be string")
-		}
-		builder.WriteString(text)
-	}
-	return builder.String(), nil
-}
-
-func writeEvent(w http.ResponseWriter, event string, payload any) error {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(w, "event: %s\n", event); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
-		return err
-	}
-	if flusher, ok := w.(http.Flusher); ok {
-		flusher.Flush()
-	}
-	return nil
+	payload["input"] = []any{items[len(items)-1]}
 }
 
 func writeCodexConfig(t *testing.T, dir, baseURL string) {
