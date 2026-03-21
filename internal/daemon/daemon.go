@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	teamsv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/teams/v1"
+	agentsv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/agents/v1"
 	"github.com/agynio/agynd-cli/internal/codexbridge"
 	"github.com/agynio/agynd-cli/internal/config"
 	"github.com/agynio/agynd-cli/internal/platform"
@@ -29,13 +29,13 @@ type Daemon struct {
 	cfg        config.Config
 	conns      *platform.Connections
 	threads    *platform.Threads
-	teams      teamsv1.TeamsServiceClient
+	agents     agentsv1.AgentsServiceClient
 	subscriber *subscriber.Subscriber
 	consumer   *platform.Consumer
 	codex      *codex.Client
 	mapping    *codexbridge.ThreadMapping
 	tracker    *codexbridge.TurnTracker
-	agent      *teamsv1.Agent
+	agent      *agentsv1.Agent
 
 	syncMu sync.Mutex
 }
@@ -48,9 +48,9 @@ func New(ctx context.Context, cfg config.Config, version string) (*Daemon, error
 
 	threadsClient := platform.NewThreads(conns.Threads)
 	notificationsClient := platform.NewNotifications(conns.Notifications)
-	teamsClient := teamsv1.NewTeamsServiceClient(conns.Teams)
+	agentsClient := agentsv1.NewAgentsServiceClient(conns.Teams)
 
-	agentResp, err := teamsClient.GetAgent(ctx, &teamsv1.GetAgentRequest{Id: cfg.AgentID.String()})
+	agentResp, err := agentsClient.GetAgent(ctx, &agentsv1.GetAgentRequest{Id: cfg.AgentID.String()})
 	if err != nil {
 		conns.Close()
 		return nil, fmt.Errorf("get agent: %w", err)
@@ -81,7 +81,7 @@ func New(ctx context.Context, cfg config.Config, version string) (*Daemon, error
 		cfg:        cfg,
 		conns:      conns,
 		threads:    threadsClient,
-		teams:      teamsClient,
+		agents:     agentsClient,
 		subscriber: subscriber.New(notificationsClient, cfg.AgentID.String()),
 		consumer:   platform.NewConsumer(threadsClient, pageSize, pageTimeout),
 		codex:      codexClient,
