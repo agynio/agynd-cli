@@ -33,11 +33,6 @@ func (h *turnCompletedHandler) OnTurnCompleted(notification *codex.TurnCompleted
 	}
 }
 
-type testLLMResponse struct {
-	ID     string            `json:"id"`
-	Output []json.RawMessage `json:"output"`
-}
-
 type responseRef struct {
 	ID string `json:"id"`
 }
@@ -219,23 +214,36 @@ func startTestProxy(t *testing.T) string {
 			return
 		}
 
-		var llmResp testLLMResponse
-		if err := json.Unmarshal(respBody, &llmResp); err != nil {
-			http.Error(w, "invalid upstream response", http.StatusBadGateway)
-			return
-		}
 		var llmRespPayload map[string]any
 		if err := json.Unmarshal(respBody, &llmRespPayload); err != nil {
 			http.Error(w, "invalid upstream response", http.StatusBadGateway)
 			return
 		}
-		if llmResp.ID == "" {
+		idValue, ok := llmRespPayload["id"].(string)
+		if !ok || idValue == "" {
 			http.Error(w, "upstream response missing id", http.StatusBadGateway)
 			return
 		}
-		parsedOutput := make([]responseOutputItem, len(llmResp.Output))
-		for index, item := range llmResp.Output {
-			if err := json.Unmarshal(item, &parsedOutput[index]); err != nil {
+		outputRaw, ok := llmRespPayload["output"]
+		if !ok {
+			http.Error(w, "upstream response missing output", http.StatusBadGateway)
+			return
+		}
+		outputItems, ok := outputRaw.([]any)
+		if !ok {
+			http.Error(w, "invalid upstream output", http.StatusBadGateway)
+			return
+		}
+		rawOutput := make([]json.RawMessage, len(outputItems))
+		parsedOutput := make([]responseOutputItem, len(outputItems))
+		for index, item := range outputItems {
+			itemBytes, err := json.Marshal(item)
+			if err != nil {
+				http.Error(w, "invalid upstream output", http.StatusBadGateway)
+				return
+			}
+			rawOutput[index] = itemBytes
+			if err := json.Unmarshal(itemBytes, &parsedOutput[index]); err != nil {
 				http.Error(w, "invalid upstream output", http.StatusBadGateway)
 				return
 			}
@@ -247,11 +255,11 @@ func startTestProxy(t *testing.T) string {
 
 		if err := writeEvent(w, "response.created", responseCreatedEvent{
 			Type:     "response.created",
-			Response: responseRef{ID: llmResp.ID},
+			Response: responseRef{ID: idValue},
 		}); err != nil {
 			return
 		}
-		for index, item := range llmResp.Output {
+		for index, item := range rawOutput {
 			if err := writeEvent(w, "response.output_item.added", responseOutputItemAddedEvent{
 				Type:        "response.output_item.added",
 				OutputIndex: index,
@@ -285,10 +293,12 @@ func startTestProxy(t *testing.T) string {
 			"output_tokens": 0,
 			"total_tokens":  0,
 		}
-		_ = writeEvent(w, "response.completed", responseCompletedEvent{
+		if err := writeEvent(w, "response.completed", responseCompletedEvent{
 			Type:     "response.completed",
 			Response: llmRespPayload,
-		})
+		}); err != nil {
+			return
+		}
 	})
 
 	server := httptest.NewServer(mux)
