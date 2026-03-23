@@ -7,6 +7,6 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-func Dial(ctx context.Context, address string) (*grpc.ClientConn, error) {
+func DialGateway(ctx context.Context, address string) (*grpc.ClientConn, error) {
 	return grpc.DialContext(ctx, address, grpc.WithTransportCredentials(insecure.NewCredentials()))
 }

@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	gatewayv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/gateway/v1"
 	notificationsv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/notifications/v1"
-	"google.golang.org/grpc"
 )
 
 type SubscribeStream interface {
@@ -13,11 +13,11 @@ type SubscribeStream interface {
 }
 
 type Notifications struct {
-	client notificationsv1.NotificationsServiceClient
+	client gatewayv1.NotificationsGatewayClient
 }
 
-func NewNotifications(conn *grpc.ClientConn) *Notifications {
-	return &Notifications{client: notificationsv1.NewNotificationsServiceClient(conn)}
+func NewNotifications(client gatewayv1.NotificationsGatewayClient) *Notifications {
+	return &Notifications{client: client}
 }
 
 func (n *Notifications) Subscribe(ctx context.Context, agentID string) (SubscribeStream, error) {

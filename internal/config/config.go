@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -9,14 +10,19 @@ import (
 	"github.com/google/uuid"
 )
 
+var agentConfigPath = "/agyn-bin/config.json"
+
+type agentConfig struct {
+	SDK string `json:"sdk"`
+	Bin string `json:"bin"`
+}
+
 type Config struct {
-	AgentID              uuid.UUID
-	ThreadsAddress       string
-	NotificationsAddress string
-	TeamsAddress         string
-	OpenAIAPIKey         string
-	CodexBinary          string
-	WorkDir              string
+	AgentID        uuid.UUID
+	GatewayAddress string
+	SDK            string
+	AgentBinary    string
+	WorkDir        string
 }
 
 func FromEnv() (Config, error) {
@@ -24,39 +30,46 @@ func FromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	threadsAddress := strings.TrimSpace(os.Getenv("THREADS_ADDRESS"))
-	if threadsAddress == "" {
-		return Config{}, fmt.Errorf("THREADS_ADDRESS is required")
-	}
-	notificationsAddress := strings.TrimSpace(os.Getenv("NOTIFICATIONS_ADDRESS"))
-	if notificationsAddress == "" {
-		return Config{}, fmt.Errorf("NOTIFICATIONS_ADDRESS is required")
-	}
-	teamsAddress := strings.TrimSpace(os.Getenv("TEAMS_ADDRESS"))
-	if teamsAddress == "" {
-		return Config{}, fmt.Errorf("TEAMS_ADDRESS is required")
-	}
-	openAIKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
-	if openAIKey == "" {
-		return Config{}, fmt.Errorf("OPENAI_API_KEY is required")
+	gatewayAddress := strings.TrimSpace(os.Getenv("GATEWAY_ADDRESS"))
+	if gatewayAddress == "" {
+		return Config{}, fmt.Errorf("GATEWAY_ADDRESS is required")
 	}
 
-	codexBinary := strings.TrimSpace(os.Getenv("CODEX_BINARY"))
-	if codexBinary == "" {
-		codexBinary = "codex"
+	agentCfg, err := loadAgentConfig(agentConfigPath)
+	if err != nil {
+		return Config{}, err
 	}
+	sdk := strings.TrimSpace(agentCfg.SDK)
+	if sdk == "" {
+		return Config{}, fmt.Errorf("%s missing sdk", agentConfigPath)
+	}
+	agentBinary := strings.TrimSpace(agentCfg.Bin)
+	if agentBinary == "" {
+		return Config{}, fmt.Errorf("%s missing bin", agentConfigPath)
+	}
+
 	workDir := strings.TrimSpace(os.Getenv("WORKSPACE_DIR"))
 	if workDir == "" {
 		workDir = "/workspace"
 	}
 
 	return Config{
-		AgentID:              agentID,
-		ThreadsAddress:       threadsAddress,
-		NotificationsAddress: notificationsAddress,
-		TeamsAddress:         teamsAddress,
-		OpenAIAPIKey:         openAIKey,
-		CodexBinary:          codexBinary,
-		WorkDir:              workDir,
+		AgentID:        agentID,
+		GatewayAddress: gatewayAddress,
+		SDK:            sdk,
+		AgentBinary:    agentBinary,
+		WorkDir:        workDir,
 	}, nil
+}
+
+func loadAgentConfig(path string) (agentConfig, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return agentConfig{}, fmt.Errorf("read %s: %w", path, err)
+	}
+	var cfg agentConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return agentConfig{}, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return cfg, nil
 }

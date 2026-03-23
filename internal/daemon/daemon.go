@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	agentsv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/agents/v1"
+	gatewayv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/gateway/v1"
 	"github.com/agynio/agynd-cli/internal/codexbridge"
 	"github.com/agynio/agynd-cli/internal/config"
 	"github.com/agynio/agynd-cli/internal/platform"
@@ -26,68 +28,89 @@ const (
 )
 
 type Daemon struct {
-	cfg        config.Config
-	conns      *platform.Connections
-	threads    *platform.Threads
-	agents     agentsv1.AgentsServiceClient
-	subscriber *subscriber.Subscriber
-	consumer   *platform.Consumer
-	codex      *codex.Client
-	mapping    *codexbridge.ThreadMapping
-	tracker    *codexbridge.TurnTracker
-	agent      *agentsv1.Agent
+	cfg         config.Config
+	gatewayConn platformConn
+	threads     *platform.Threads
+	agents      gatewayv1.AgentsGatewayClient
+	subscriber  *subscriber.Subscriber
+	consumer    *platform.Consumer
+	codex       *codex.Client
+	mapping     *codexbridge.ThreadMapping
+	tracker     *codexbridge.TurnTracker
+	agent       *agentsv1.Agent
 
 	syncMu sync.Mutex
 }
 
+type platformConn interface {
+	Close() error
+}
+
 func New(ctx context.Context, cfg config.Config, version string) (*Daemon, error) {
-	conns, err := platform.DialConnections(ctx, cfg.ThreadsAddress, cfg.NotificationsAddress, cfg.TeamsAddress)
+	switch cfg.SDK {
+	case "codex":
+		return newCodexDaemon(ctx, cfg, version)
+	case "claude", "agn":
+		return nil, fmt.Errorf("sdk %q is not yet supported", cfg.SDK)
+	default:
+		return nil, fmt.Errorf("unknown sdk %q", cfg.SDK)
+	}
+}
+
+func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Daemon, error) {
+	gatewayConn, err := platform.DialGateway(ctx, cfg.GatewayAddress)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("dial gateway: %w", err)
 	}
 
-	threadsClient := platform.NewThreads(conns.Threads)
-	notificationsClient := platform.NewNotifications(conns.Notifications)
-	agentsClient := agentsv1.NewAgentsServiceClient(conns.Teams)
+	threadsGateway := gatewayv1.NewThreadsGatewayClient(gatewayConn)
+	notificationsGateway := gatewayv1.NewNotificationsGatewayClient(gatewayConn)
+	agentsClient := gatewayv1.NewAgentsGatewayClient(gatewayConn)
+
+	threadsClient := platform.NewThreads(threadsGateway)
+	notificationsClient := platform.NewNotifications(notificationsGateway)
 
 	agentResp, err := agentsClient.GetAgent(ctx, &agentsv1.GetAgentRequest{Id: cfg.AgentID.String()})
 	if err != nil {
-		conns.Close()
+		_ = gatewayConn.Close()
 		return nil, fmt.Errorf("get agent: %w", err)
 	}
 	agent := agentResp.GetAgent()
 	if agent == nil {
-		conns.Close()
+		_ = gatewayConn.Close()
 		return nil, fmt.Errorf("agent not found")
 	}
 
 	tracker := codexbridge.NewTurnTracker()
 	bridge := codexbridge.New(tracker)
 	threadsMapping := codexbridge.NewThreadMapping()
-	codexClient, err := codex.NewClient(ctx,
-		codex.WithBinary(cfg.CodexBinary),
+	options := []codex.Option{
+		codex.WithBinary(cfg.AgentBinary),
 		codex.WithWorkDir(cfg.WorkDir),
 		codex.WithNotificationHandler(bridge),
 		codex.WithApprovalHandler(codex.AutoApprovalHandler{}),
 		codex.WithClientInfo("agynd", version),
-		codex.WithEnv(map[string]string{"OPENAI_API_KEY": cfg.OpenAIAPIKey}),
-	)
+	}
+	if openAIKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY")); openAIKey != "" {
+		options = append(options, codex.WithEnv(map[string]string{"OPENAI_API_KEY": openAIKey}))
+	}
+	codexClient, err := codex.NewClient(ctx, options...)
 	if err != nil {
-		conns.Close()
+		_ = gatewayConn.Close()
 		return nil, err
 	}
 
 	return &Daemon{
-		cfg:        cfg,
-		conns:      conns,
-		threads:    threadsClient,
-		agents:     agentsClient,
-		subscriber: subscriber.New(notificationsClient, cfg.AgentID.String()),
-		consumer:   platform.NewConsumer(threadsClient, pageSize, pageTimeout),
-		codex:      codexClient,
-		mapping:    threadsMapping,
-		tracker:    tracker,
-		agent:      agent,
+		cfg:         cfg,
+		gatewayConn: gatewayConn,
+		threads:     threadsClient,
+		agents:      agentsClient,
+		subscriber:  subscriber.New(notificationsClient, cfg.AgentID.String()),
+		consumer:    platform.NewConsumer(threadsClient, pageSize, pageTimeout),
+		codex:       codexClient,
+		mapping:     threadsMapping,
+		tracker:     tracker,
+		agent:       agent,
 	}, nil
 }
 
@@ -95,8 +118,8 @@ func (d *Daemon) Close() {
 	if d.codex != nil {
 		_ = d.codex.Close()
 	}
-	if d.conns != nil {
-		d.conns.Close()
+	if d.gatewayConn != nil {
+		_ = d.gatewayConn.Close()
 	}
 }
 
