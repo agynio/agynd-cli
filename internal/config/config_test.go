@@ -14,6 +14,7 @@ func setRequiredEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("AGENT_ID", validAgentID)
 	t.Setenv("GATEWAY_ADDRESS", "gateway:1234")
+	t.Setenv("LLM_BASE_URL", "https://llm.example")
 }
 
 func writeAgentConfig(t *testing.T, sdk, bin string) string {
@@ -47,6 +48,9 @@ func TestFromEnvValid(t *testing.T) {
 	if cfg.GatewayAddress != "gateway:1234" {
 		t.Fatalf("unexpected gateway address: %s", cfg.GatewayAddress)
 	}
+	if cfg.LLMBaseURL != "https://llm.example" {
+		t.Fatalf("unexpected LLM base URL: %s", cfg.LLMBaseURL)
+	}
 	if cfg.SDK != "codex" {
 		t.Fatalf("unexpected sdk: %s", cfg.SDK)
 	}
@@ -66,6 +70,7 @@ func TestFromEnvMissingRequired(t *testing.T) {
 	}{
 		{name: "agent-id", missing: "AGENT_ID", expected: "AGENT_ID"},
 		{name: "gateway", missing: "GATEWAY_ADDRESS", expected: "GATEWAY_ADDRESS"},
+		{name: "llm-base-url", missing: "LLM_BASE_URL", expected: "LLM_BASE_URL"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

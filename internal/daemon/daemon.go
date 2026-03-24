@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -84,15 +83,21 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 	tracker := codexbridge.NewTurnTracker()
 	bridge := codexbridge.New(tracker)
 	threadsMapping := codexbridge.NewThreadMapping()
+	codexHome, err := writeCodexConfig(cfg.LLMBaseURL)
+	if err != nil {
+		_ = gatewayConn.Close()
+		return nil, err
+	}
 	options := []codex.Option{
 		codex.WithBinary(cfg.AgentBinary),
 		codex.WithWorkDir(cfg.WorkDir),
+		codex.WithEnv(map[string]string{
+			"CODEX_HOME":     codexHome,
+			"OPENAI_API_KEY": "platform",
+		}),
 		codex.WithNotificationHandler(bridge),
 		codex.WithApprovalHandler(codex.AutoApprovalHandler{}),
 		codex.WithClientInfo("agynd", version),
-	}
-	if openAIKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY")); openAIKey != "" {
-		options = append(options, codex.WithEnv(map[string]string{"OPENAI_API_KEY": openAIKey}))
 	}
 	codexClient, err := codex.NewClient(ctx, options...)
 	if err != nil {

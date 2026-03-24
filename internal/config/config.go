@@ -20,6 +20,7 @@ type agentConfig struct {
 type Config struct {
 	AgentID        uuid.UUID
 	GatewayAddress string
+	LLMBaseURL     string
 	SDK            string
 	AgentBinary    string
 	WorkDir        string
@@ -37,6 +38,10 @@ func fromEnv(configPath string) (Config, error) {
 	gatewayAddress := strings.TrimSpace(os.Getenv("GATEWAY_ADDRESS"))
 	if gatewayAddress == "" {
 		return Config{}, fmt.Errorf("GATEWAY_ADDRESS is required")
+	}
+	llmBaseURL := strings.TrimSpace(os.Getenv("LLM_BASE_URL"))
+	if llmBaseURL == "" {
+		return Config{}, fmt.Errorf("LLM_BASE_URL is required")
 	}
 
 	agentCfg, err := loadAgentConfig(configPath)
@@ -60,6 +65,7 @@ func fromEnv(configPath string) (Config, error) {
 	return Config{
 		AgentID:        agentID,
 		GatewayAddress: gatewayAddress,
+		LLMBaseURL:     llmBaseURL,
 		SDK:            sdk,
 		AgentBinary:    agentBinary,
 		WorkDir:        workDir,

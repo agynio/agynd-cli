@@ -17,6 +17,7 @@ func testConfig(sdk string) config.Config {
 	return config.Config{
 		AgentID:        uuid.MustParse(testAgentID),
 		GatewayAddress: "127.0.0.1:0",
+		LLMBaseURL:     "https://llm.example",
 		SDK:            sdk,
 		AgentBinary:    "codex",
 		WorkDir:        "/tmp",
