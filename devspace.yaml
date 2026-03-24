@@ -126,3 +126,9 @@ dev:
               - .git/
               - .devspace/
               - /.gen/
+              - /tmp/
+            downloadExcludePaths:
+              - .git/
+              - .devspace/
+              - /.gen/
+              - /tmp/

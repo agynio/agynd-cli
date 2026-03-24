@@ -58,7 +58,7 @@ func New(ctx context.Context, cfg config.Config, version string) (*Daemon, error
 }
 
 func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Daemon, error) {
-	gatewayConn, err := platform.DialGateway(ctx, cfg.GatewayAddress)
+	gatewayConn, err := platform.DialGateway(cfg.GatewayAddress)
 	if err != nil {
 		return nil, fmt.Errorf("dial gateway: %w", err)
 	}

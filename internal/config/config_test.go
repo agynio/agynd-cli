@@ -16,32 +16,28 @@ func setRequiredEnv(t *testing.T) {
 	t.Setenv("GATEWAY_ADDRESS", "gateway:1234")
 }
 
-func writeAgentConfig(t *testing.T, sdk, bin string) {
+func writeAgentConfig(t *testing.T, sdk, bin string) string {
 	t.Helper()
 	payload := fmt.Sprintf(`{"sdk":%q,"bin":%q}`, sdk, bin)
-	writeAgentConfigRaw(t, payload)
+	return writeAgentConfigRaw(t, payload)
 }
 
-func writeAgentConfigRaw(t *testing.T, payload string) {
+func writeAgentConfigRaw(t *testing.T, payload string) string {
 	t.Helper()
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")
 	if err := os.WriteFile(configPath, []byte(payload), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	oldPath := agentConfigPath
-	agentConfigPath = configPath
-	t.Cleanup(func() {
-		agentConfigPath = oldPath
-	})
+	return configPath
 }
 
 func TestFromEnvValid(t *testing.T) {
 	setRequiredEnv(t)
-	writeAgentConfig(t, "codex", "/opt/bin/codex")
+	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
 	t.Setenv("WORKSPACE_DIR", "/tmp/workdir")
 
-	cfg, err := FromEnv()
+	cfg, err := fromEnv(configPath)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -74,9 +70,9 @@ func TestFromEnvMissingRequired(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			setRequiredEnv(t)
-			writeAgentConfig(t, "codex", "/opt/bin/codex")
+			configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
 			t.Setenv(test.missing, "")
-			_, err := FromEnv()
+			_, err := fromEnv(configPath)
 			if err == nil {
 				t.Fatalf("expected error for missing %s", test.missing)
 			}
@@ -89,10 +85,10 @@ func TestFromEnvMissingRequired(t *testing.T) {
 
 func TestFromEnvDefaults(t *testing.T) {
 	setRequiredEnv(t)
-	writeAgentConfig(t, "codex", "/opt/bin/codex")
+	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
 	t.Setenv("WORKSPACE_DIR", "")
 
-	cfg, err := FromEnv()
+	cfg, err := fromEnv(configPath)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -105,13 +101,8 @@ func TestFromEnvMissingConfigFile(t *testing.T) {
 	setRequiredEnv(t)
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")
-	oldPath := agentConfigPath
-	agentConfigPath = configPath
-	t.Cleanup(func() {
-		agentConfigPath = oldPath
-	})
 
-	_, err := FromEnv()
+	_, err := fromEnv(configPath)
 	if err == nil {
 		t.Fatal("expected error for missing config")
 	}
@@ -122,8 +113,8 @@ func TestFromEnvMissingConfigFile(t *testing.T) {
 
 func TestFromEnvMissingConfigFields(t *testing.T) {
 	setRequiredEnv(t)
-	writeAgentConfigRaw(t, `{}`)
-	_, err := FromEnv()
+	configPath := writeAgentConfigRaw(t, `{}`)
+	_, err := fromEnv(configPath)
 	if err == nil {
 		t.Fatal("expected error for missing sdk")
 	}
@@ -131,8 +122,8 @@ func TestFromEnvMissingConfigFields(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	writeAgentConfigRaw(t, `{"sdk":"codex"}`)
-	_, err = FromEnv()
+	configPath = writeAgentConfigRaw(t, `{"sdk":"codex"}`)
+	_, err = fromEnv(configPath)
 	if err == nil {
 		t.Fatal("expected error for missing bin")
 	}

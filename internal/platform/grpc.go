@@ -1,12 +1,10 @@
 package platform
 
 import (
-	"context"
-
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-func DialGateway(ctx context.Context, address string) (*grpc.ClientConn, error) {
-	return grpc.DialContext(ctx, address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+func DialGateway(address string) (*grpc.ClientConn, error) {
+	return grpc.NewClient(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
 }

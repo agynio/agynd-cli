@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-var agentConfigPath = "/agyn-bin/config.json"
+const agentConfigPath = "/agyn-bin/config.json"
 
 type agentConfig struct {
 	SDK string `json:"sdk"`
@@ -26,6 +26,10 @@ type Config struct {
 }
 
 func FromEnv() (Config, error) {
+	return fromEnv(agentConfigPath)
+}
+
+func fromEnv(configPath string) (Config, error) {
 	agentID, err := uuidutil.ParseUUID(strings.TrimSpace(os.Getenv("AGENT_ID")), "AGENT_ID")
 	if err != nil {
 		return Config{}, err
@@ -35,17 +39,17 @@ func FromEnv() (Config, error) {
 		return Config{}, fmt.Errorf("GATEWAY_ADDRESS is required")
 	}
 
-	agentCfg, err := loadAgentConfig(agentConfigPath)
+	agentCfg, err := loadAgentConfig(configPath)
 	if err != nil {
 		return Config{}, err
 	}
 	sdk := strings.TrimSpace(agentCfg.SDK)
 	if sdk == "" {
-		return Config{}, fmt.Errorf("%s missing sdk", agentConfigPath)
+		return Config{}, fmt.Errorf("%s missing sdk", configPath)
 	}
 	agentBinary := strings.TrimSpace(agentCfg.Bin)
 	if agentBinary == "" {
-		return Config{}, fmt.Errorf("%s missing bin", agentConfigPath)
+		return Config{}, fmt.Errorf("%s missing bin", configPath)
 	}
 
 	workDir := strings.TrimSpace(os.Getenv("WORKSPACE_DIR"))
