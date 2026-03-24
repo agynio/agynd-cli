@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +35,7 @@ type Daemon struct {
 	subscriber  *subscriber.Subscriber
 	consumer    *platform.Consumer
 	codex       *codex.Client
+	codexHome   string
 	mapping     *codexbridge.ThreadMapping
 	tracker     *codexbridge.TurnTracker
 	agent       *agentsv1.Agent
@@ -113,6 +115,7 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 		subscriber:  subscriber.New(notificationsClient, cfg.AgentID.String()),
 		consumer:    platform.NewConsumer(threadsClient, pageSize, pageTimeout),
 		codex:       codexClient,
+		codexHome:   codexHome,
 		mapping:     threadsMapping,
 		tracker:     tracker,
 		agent:       agent,
@@ -125,6 +128,9 @@ func (d *Daemon) Close() {
 	}
 	if d.gatewayConn != nil {
 		_ = d.gatewayConn.Close()
+	}
+	if d.codexHome != "" {
+		_ = os.RemoveAll(d.codexHome)
 	}
 }
 

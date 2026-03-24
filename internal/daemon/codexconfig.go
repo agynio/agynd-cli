@@ -22,7 +22,7 @@ func writeCodexConfig(llmBaseURL string) (string, error) {
 	}
 	configPath := filepath.Join(codexHome, "config.toml")
 	payload := fmt.Sprintf(codexConfigTemplate, llmBaseURL)
-	if err := os.WriteFile(configPath, []byte(payload), 0o644); err != nil {
+	if err := os.WriteFile(configPath, []byte(payload), 0o600); err != nil {
 		_ = os.RemoveAll(codexHome)
 		return "", fmt.Errorf("write codex config: %w", err)
 	}
