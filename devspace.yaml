@@ -53,9 +53,8 @@ functions:
                     [ "$elapsed" -ge 120 ] && { echo "ERROR: sync timeout" >&2; exit 1; }
                   done
                   buf generate buf.build/agynio/api \
-                    --path agynio/api/threads/v1 \
-                    --path agynio/api/notifications/v1 \
-                    --path agynio/api/agents/v1
+                    --path agynio/api/gateway/v1 \
+                    --include-imports
                   exec go run ./cmd/agynd
               volumeMounts:
                 - name: data

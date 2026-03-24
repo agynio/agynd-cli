@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	gatewayv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/gateway/v1"
 	threadsv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/threads/v1"
-	"google.golang.org/grpc"
 )
 
 type Message struct {
@@ -19,11 +19,11 @@ type Message struct {
 }
 
 type Threads struct {
-	client threadsv1.ThreadsServiceClient
+	client gatewayv1.ThreadsGatewayClient
 }
 
-func NewThreads(conn *grpc.ClientConn) *Threads {
-	return &Threads{client: threadsv1.NewThreadsServiceClient(conn)}
+func NewThreads(client gatewayv1.ThreadsGatewayClient) *Threads {
+	return &Threads{client: client}
 }
 
 func (t *Threads) GetUnackedMessages(ctx context.Context, participantID string, pageSize int32, pageToken string) ([]Message, string, error) {

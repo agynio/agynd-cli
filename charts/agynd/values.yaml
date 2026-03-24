@@ -65,17 +65,9 @@ args: []
 env:
   - name: AGENT_ID
     value: ""
-  - name: THREADS_ADDRESS
-    value: ""
-  - name: NOTIFICATIONS_ADDRESS
-    value: ""
-  - name: TEAMS_ADDRESS
-    value: ""
-  - name: CODEX_BINARY
+  - name: GATEWAY_ADDRESS
     value: ""
   - name: WORKSPACE_DIR
-    value: ""
-  - name: OPENAI_API_KEY
     value: ""
 envFrom: []
 extraEnvVars: []

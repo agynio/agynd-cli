@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	gatewayv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/gateway/v1"
 	threadsv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/threads/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -15,6 +16,8 @@ type fakeThreadsClient struct {
 	responses []*threadsv1.GetUnackedMessagesResponse
 	index     int
 }
+
+var _ gatewayv1.ThreadsGatewayClient = (*fakeThreadsClient)(nil)
 
 func (f *fakeThreadsClient) CreateThread(ctx context.Context, in *threadsv1.CreateThreadRequest, opts ...grpc.CallOption) (*threadsv1.CreateThreadResponse, error) {
 	return nil, fmt.Errorf("CreateThread not implemented")
