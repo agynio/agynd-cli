@@ -64,7 +64,7 @@ func TestBuildInputEmpty(t *testing.T) {
 }
 
 func TestNewUnsupportedSDKs(t *testing.T) {
-	unsupported := []string{"claude", "agn"}
+	unsupported := []string{"claude"}
 	for _, sdk := range unsupported {
 		_, err := New(context.Background(), testConfig(sdk), "test")
 		if err == nil {
@@ -94,6 +94,19 @@ func TestNewCodexDispatch(t *testing.T) {
 	_, err := New(ctx, testConfig("codex"), "test")
 	if err == nil {
 		t.Fatal("expected error for codex dispatch")
+	}
+	if strings.Contains(err.Error(), "not yet supported") || strings.Contains(err.Error(), "unknown sdk") {
+		t.Fatalf("unexpected dispatch error: %v", err)
+	}
+}
+
+func TestNewAgnDispatch(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	_, err := New(ctx, testConfig("agn"), "test")
+	if err == nil {
+		t.Fatal("expected error for agn dispatch")
 	}
 	if strings.Contains(err.Error(), "not yet supported") || strings.Contains(err.Error(), "unknown sdk") {
 		t.Fatalf("unexpected dispatch error: %v", err)

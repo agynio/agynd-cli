@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	agnsdk "github.com/agynio/agn-sdk-go"
 	agentsv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/agents/v1"
 	gatewayv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/gateway/v1"
 	"github.com/agynio/agynd-cli/internal/codexbridge"
@@ -29,6 +30,7 @@ const (
 
 type Daemon struct {
 	cfg         config.Config
+	sdk         string
 	gatewayConn platformConn
 	threads     *platform.Threads
 	agents      gatewayv1.AgentsGatewayClient
@@ -38,6 +40,8 @@ type Daemon struct {
 	codexHome   string
 	mapping     *codexbridge.ThreadMapping
 	tracker     *codexbridge.TurnTracker
+	agn         *agnsdk.Client
+	agnDir      string
 	agent       *agentsv1.Agent
 
 	syncMu sync.Mutex
@@ -51,7 +55,9 @@ func New(ctx context.Context, cfg config.Config, version string) (*Daemon, error
 	switch cfg.SDK {
 	case "codex":
 		return newCodexDaemon(ctx, cfg, version)
-	case "claude", "agn":
+	case "agn":
+		return newAgnDaemon(ctx, cfg, version)
+	case "claude":
 		return nil, fmt.Errorf("sdk %q is not yet supported", cfg.SDK)
 	default:
 		return nil, fmt.Errorf("unknown sdk %q", cfg.SDK)
@@ -109,6 +115,7 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 
 	return &Daemon{
 		cfg:         cfg,
+		sdk:         "codex",
 		gatewayConn: gatewayConn,
 		threads:     threadsClient,
 		agents:      agentsClient,
@@ -126,11 +133,17 @@ func (d *Daemon) Close() {
 	if d.codex != nil {
 		_ = d.codex.Close()
 	}
+	if d.agn != nil {
+		_ = d.agn.Close()
+	}
 	if d.gatewayConn != nil {
 		_ = d.gatewayConn.Close()
 	}
 	if d.codexHome != "" {
 		_ = os.RemoveAll(d.codexHome)
+	}
+	if d.agnDir != "" {
+		_ = os.RemoveAll(d.agnDir)
 	}
 }
 
@@ -167,6 +180,13 @@ func (d *Daemon) syncMessages(ctx context.Context) error {
 }
 
 func (d *Daemon) handleMessage(ctx context.Context, message platform.Message) error {
+	if d.sdk == "agn" {
+		return d.handleAgnMessage(ctx, message)
+	}
+	return d.handleCodexMessage(ctx, message)
+}
+
+func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Message) error {
 	threadID := strings.TrimSpace(message.ThreadID)
 	if threadID == "" {
 		return fmt.Errorf("message %s missing thread id", message.ID)
