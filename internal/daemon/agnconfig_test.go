@@ -21,7 +21,7 @@ func TestWriteAgnConfig(t *testing.T) {
 		t.Fatalf("expected config to be readable, got %v", err)
 	}
 
-	expected := fmt.Sprintf(agnConfigTemplate, baseURL, agnDefaultModel)
+	expected := fmt.Sprintf(agnConfigTemplate, baseURL, agnDefaultAPIKey, agnDefaultModel)
 	if string(content) != expected {
 		t.Fatalf("expected config %q, got %q", expected, string(content))
 	}

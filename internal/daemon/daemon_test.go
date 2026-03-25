@@ -14,12 +14,16 @@ import (
 const testAgentID = "550e8400-e29b-41d4-a716-446655440000"
 
 func testConfig(sdk string) config.Config {
+	binary := SDKCodex
+	if sdk == SDKAgn {
+		binary = SDKAgn
+	}
 	return config.Config{
 		AgentID:        uuid.MustParse(testAgentID),
 		GatewayAddress: "127.0.0.1:0",
 		LLMBaseURL:     "https://llm.example",
 		SDK:            sdk,
-		AgentBinary:    "codex",
+		AgentBinary:    binary,
 		WorkDir:        "/tmp",
 	}
 }
@@ -64,7 +68,7 @@ func TestBuildInputEmpty(t *testing.T) {
 }
 
 func TestNewUnsupportedSDKs(t *testing.T) {
-	unsupported := []string{"claude"}
+	unsupported := []string{SDKClaude}
 	for _, sdk := range unsupported {
 		_, err := New(context.Background(), testConfig(sdk), "test")
 		if err == nil {
@@ -91,7 +95,7 @@ func TestNewCodexDispatch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	_, err := New(ctx, testConfig("codex"), "test")
+	_, err := New(ctx, testConfig(SDKCodex), "test")
 	if err == nil {
 		t.Fatal("expected error for codex dispatch")
 	}
@@ -104,7 +108,7 @@ func TestNewAgnDispatch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	_, err := New(ctx, testConfig("agn"), "test")
+	_, err := New(ctx, testConfig(SDKAgn), "test")
 	if err == nil {
 		t.Fatal("expected error for agn dispatch")
 	}

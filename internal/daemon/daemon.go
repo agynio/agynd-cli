@@ -28,6 +28,12 @@ const (
 	messageAckTimeout           = 15 * time.Second
 )
 
+const (
+	SDKCodex  = "codex"
+	SDKAgn    = "agn"
+	SDKClaude = "claude"
+)
+
 type Daemon struct {
 	cfg         config.Config
 	sdk         string
@@ -51,20 +57,28 @@ type platformConn interface {
 	Close() error
 }
 
+type platformSetup struct {
+	gatewayConn   platformConn
+	threads       *platform.Threads
+	notifications *platform.Notifications
+	agents        gatewayv1.AgentsGatewayClient
+	agent         *agentsv1.Agent
+}
+
 func New(ctx context.Context, cfg config.Config, version string) (*Daemon, error) {
 	switch cfg.SDK {
-	case "codex":
+	case SDKCodex:
 		return newCodexDaemon(ctx, cfg, version)
-	case "agn":
+	case SDKAgn:
 		return newAgnDaemon(ctx, cfg, version)
-	case "claude":
+	case SDKClaude:
 		return nil, fmt.Errorf("sdk %q is not yet supported", cfg.SDK)
 	default:
 		return nil, fmt.Errorf("unknown sdk %q", cfg.SDK)
 	}
 }
 
-func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Daemon, error) {
+func connectPlatform(ctx context.Context, cfg config.Config) (*platformSetup, error) {
 	gatewayConn, err := platform.DialGateway(cfg.GatewayAddress)
 	if err != nil {
 		return nil, fmt.Errorf("dial gateway: %w", err)
@@ -88,12 +102,27 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 		return nil, fmt.Errorf("agent not found")
 	}
 
+	return &platformSetup{
+		gatewayConn:   gatewayConn,
+		threads:       threadsClient,
+		notifications: notificationsClient,
+		agents:        agentsClient,
+		agent:         agent,
+	}, nil
+}
+
+func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Daemon, error) {
+	setup, err := connectPlatform(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	tracker := codexbridge.NewTurnTracker()
 	bridge := codexbridge.New(tracker)
 	threadsMapping := codexbridge.NewThreadMapping()
 	codexHome, err := writeCodexConfig(cfg.LLMBaseURL)
 	if err != nil {
-		_ = gatewayConn.Close()
+		_ = setup.gatewayConn.Close()
 		return nil, err
 	}
 	options := []codex.Option{
@@ -109,23 +138,24 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 	}
 	codexClient, err := codex.NewClient(ctx, options...)
 	if err != nil {
-		_ = gatewayConn.Close()
+		_ = setup.gatewayConn.Close()
+		_ = os.RemoveAll(codexHome)
 		return nil, err
 	}
 
 	return &Daemon{
 		cfg:         cfg,
-		sdk:         "codex",
-		gatewayConn: gatewayConn,
-		threads:     threadsClient,
-		agents:      agentsClient,
-		subscriber:  subscriber.New(notificationsClient, cfg.AgentID.String()),
-		consumer:    platform.NewConsumer(threadsClient, pageSize, pageTimeout),
+		sdk:         SDKCodex,
+		gatewayConn: setup.gatewayConn,
+		threads:     setup.threads,
+		agents:      setup.agents,
+		subscriber:  subscriber.New(setup.notifications, cfg.AgentID.String()),
+		consumer:    platform.NewConsumer(setup.threads, pageSize, pageTimeout),
 		codex:       codexClient,
 		codexHome:   codexHome,
 		mapping:     threadsMapping,
 		tracker:     tracker,
-		agent:       agent,
+		agent:       setup.agent,
 	}, nil
 }
 
@@ -180,10 +210,14 @@ func (d *Daemon) syncMessages(ctx context.Context) error {
 }
 
 func (d *Daemon) handleMessage(ctx context.Context, message platform.Message) error {
-	if d.sdk == "agn" {
+	switch d.sdk {
+	case SDKCodex:
+		return d.handleCodexMessage(ctx, message)
+	case SDKAgn:
 		return d.handleAgnMessage(ctx, message)
+	default:
+		return fmt.Errorf("unknown sdk %q", d.sdk)
 	}
-	return d.handleCodexMessage(ctx, message)
 }
 
 func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Message) error {
