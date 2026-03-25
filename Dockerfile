@@ -22,6 +22,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
 COPY buf.gen.yaml buf.yaml ./
+# Use gateway protos to include transitive imports.
 RUN buf generate buf.build/agynio/api \
     --path agynio/api/gateway/v1 \
     --include-imports

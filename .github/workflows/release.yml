@@ -35,6 +35,7 @@ jobs:
 
       - name: Generate protobuf bindings
         run: |
+          # Use gateway protos to include transitive imports.
           buf generate buf.build/agynio/api \
             --path agynio/api/gateway/v1 \
             --include-imports
