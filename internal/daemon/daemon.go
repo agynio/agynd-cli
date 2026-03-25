@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	agnsdk "github.com/agynio/agn-sdk-go"
 	notificationsv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/notifications/v1"
 	teamsv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/teams/v1"
 	threadsv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/threads/v1"
@@ -32,6 +34,9 @@ type Daemon struct {
 	subscriber    *subscriber.Subscriber
 	codex         *codex.Client
 	mapping       *codexbridge.ThreadMapping
+	agn           *agnsdk.Client
+	agnDir        string
+	sdk           string
 	agent         *teamsv1.Agent
 
 	syncMu sync.Mutex
@@ -42,6 +47,21 @@ type platformConn interface {
 }
 
 func New(ctx context.Context, cfg config.Config, version string) (*Daemon, error) {
+	sdk := strings.ToLower(strings.TrimSpace(cfg.SDK))
+	if sdk == "" {
+		sdk = "codex"
+	}
+	switch sdk {
+	case "codex":
+		return newCodexDaemon(ctx, cfg, version)
+	case "agn":
+		return newAgnDaemon(ctx, cfg, version)
+	default:
+		return nil, fmt.Errorf("unknown sdk %q", sdk)
+	}
+}
+
+func newDaemonBase(ctx context.Context, cfg config.Config) (*Daemon, error) {
 	threadsConn, err := platform.Dial(ctx, cfg.ThreadsAddress)
 	if err != nil {
 		return nil, fmt.Errorf("dial threads: %w", err)
@@ -77,22 +97,6 @@ func New(ctx context.Context, cfg config.Config, version string) (*Daemon, error
 		return nil, fmt.Errorf("agent not found")
 	}
 
-	mapping := codexbridge.NewThreadMapping()
-	bridge := codexbridge.New(ctx, threadsClient, cfg.AgentID.String(), mapping)
-	codexClient, err := codex.NewClient(ctx,
-		codex.WithBinary(cfg.CodexBinary),
-		codex.WithWorkDir(cfg.WorkDir),
-		codex.WithNotificationHandler(bridge),
-		codex.WithApprovalHandler(codex.AutoApprovalHandler{}),
-		codex.WithClientInfo("agynd", version),
-	)
-	if err != nil {
-		_ = threadsConn.Close()
-		_ = notifsConn.Close()
-		_ = teamsConn.Close()
-		return nil, err
-	}
-
 	return &Daemon{
 		cfg:           cfg,
 		threadsConn:   threadsConn,
@@ -102,15 +106,45 @@ func New(ctx context.Context, cfg config.Config, version string) (*Daemon, error
 		notifications: notificationsClient,
 		teams:         teamsClient,
 		subscriber:    subscriber.New(notificationsClient),
-		codex:         codexClient,
-		mapping:       mapping,
 		agent:         agent,
 	}, nil
+}
+
+func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Daemon, error) {
+	daemon, err := newDaemonBase(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	mapping := codexbridge.NewThreadMapping()
+	bridge := codexbridge.New(ctx, daemon.threads, cfg.AgentID.String(), mapping)
+	codexClient, err := codex.NewClient(ctx,
+		codex.WithBinary(cfg.AgentBinary),
+		codex.WithWorkDir(cfg.WorkDir),
+		codex.WithNotificationHandler(bridge),
+		codex.WithApprovalHandler(codex.AutoApprovalHandler{}),
+		codex.WithClientInfo("agynd", version),
+	)
+	if err != nil {
+		daemon.Close()
+		return nil, err
+	}
+
+	daemon.codex = codexClient
+	daemon.mapping = mapping
+	daemon.sdk = "codex"
+	return daemon, nil
 }
 
 func (d *Daemon) Close() {
 	if d.codex != nil {
 		_ = d.codex.Close()
+	}
+	if d.agn != nil {
+		_ = d.agn.Close()
+	}
+	if d.agnDir != "" {
+		_ = os.RemoveAll(d.agnDir)
 	}
 	if d.threadsConn != nil {
 		_ = d.threadsConn.Close()
@@ -192,6 +226,17 @@ func (d *Daemon) syncMessages(ctx context.Context) error {
 }
 
 func (d *Daemon) handleMessage(ctx context.Context, message *threadsv1.Message) error {
+	switch d.sdk {
+	case "codex":
+		return d.handleCodexMessage(ctx, message)
+	case "agn":
+		return d.handleAgnMessage(ctx, message)
+	default:
+		return fmt.Errorf("unknown sdk %q", d.sdk)
+	}
+}
+
+func (d *Daemon) handleCodexMessage(ctx context.Context, message *threadsv1.Message) error {
 	threadID := strings.TrimSpace(message.GetThreadId())
 	if threadID == "" {
 		return fmt.Errorf("message %s missing thread id", message.GetId())

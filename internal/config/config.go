@@ -14,7 +14,9 @@ type Config struct {
 	ThreadsAddress       string
 	NotificationsAddress string
 	TeamsAddress         string
-	CodexBinary          string
+	SDK                  string
+	AgentBinary          string
+	LLMBaseURL           string
 	WorkDir              string
 }
 
@@ -36,9 +38,27 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("TEAMS_ADDRESS is required")
 	}
 
-	codexBinary := strings.TrimSpace(os.Getenv("CODEX_BINARY"))
-	if codexBinary == "" {
-		codexBinary = "codex"
+	sdk := strings.ToLower(strings.TrimSpace(os.Getenv("AGENT_SDK")))
+	if sdk == "" {
+		sdk = "codex"
+	}
+	switch sdk {
+	case "codex", "agn":
+	default:
+		return Config{}, fmt.Errorf("AGENT_SDK must be \"codex\" or \"agn\"")
+	}
+
+	agentBinary := strings.TrimSpace(os.Getenv("AGENT_BINARY"))
+	if agentBinary == "" {
+		agentBinary = strings.TrimSpace(os.Getenv("CODEX_BINARY"))
+	}
+	if agentBinary == "" {
+		agentBinary = "codex"
+	}
+
+	llmBaseURL := strings.TrimSpace(os.Getenv("LLM_BASE_URL"))
+	if sdk == "agn" && llmBaseURL == "" {
+		return Config{}, fmt.Errorf("LLM_BASE_URL is required for agn sdk")
 	}
 	workDir := strings.TrimSpace(os.Getenv("WORKSPACE_DIR"))
 	if workDir == "" {
@@ -54,7 +74,9 @@ func Load() (Config, error) {
 		ThreadsAddress:       threadsAddress,
 		NotificationsAddress: notificationsAddress,
 		TeamsAddress:         teamsAddress,
-		CodexBinary:          codexBinary,
+		SDK:                  sdk,
+		AgentBinary:          agentBinary,
+		LLMBaseURL:           llmBaseURL,
 		WorkDir:              workDir,
 	}, nil
 }
