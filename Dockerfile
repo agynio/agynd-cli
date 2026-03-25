@@ -23,9 +23,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 COPY buf.gen.yaml buf.yaml ./
 RUN buf generate buf.build/agynio/api \
-    --path agynio/api/threads/v1 \
-    --path agynio/api/notifications/v1 \
-    --path agynio/api/agents/v1
+    --path agynio/api/gateway/v1 \
+    --include-imports
 
 COPY . .
 
