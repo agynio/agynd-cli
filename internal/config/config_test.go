@@ -62,6 +62,34 @@ func TestFromEnvValid(t *testing.T) {
 	}
 }
 
+func TestFromEnvModelOverride(t *testing.T) {
+	setRequiredEnv(t)
+	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	t.Setenv("MODEL_OVERRIDE", "gpt-4")
+
+	cfg, err := fromEnv(configPath)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.ModelOverride != "gpt-4" {
+		t.Fatalf("unexpected model override: %s", cfg.ModelOverride)
+	}
+}
+
+func TestFromEnvModelOverrideDefault(t *testing.T) {
+	setRequiredEnv(t)
+	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	t.Setenv("MODEL_OVERRIDE", "")
+
+	cfg, err := fromEnv(configPath)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.ModelOverride != "" {
+		t.Fatalf("expected empty model override, got %q", cfg.ModelOverride)
+	}
+}
+
 func TestFromEnvMissingRequired(t *testing.T) {
 	tests := []struct {
 		name     string

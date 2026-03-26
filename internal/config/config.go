@@ -21,6 +21,7 @@ type Config struct {
 	AgentID        uuid.UUID
 	GatewayAddress string
 	LLMBaseURL     string
+	ModelOverride  string
 	SDK            string
 	AgentBinary    string
 	WorkDir        string
@@ -43,6 +44,7 @@ func fromEnv(configPath string) (Config, error) {
 	if llmBaseURL == "" {
 		return Config{}, fmt.Errorf("LLM_BASE_URL is required")
 	}
+	modelOverride := strings.TrimSpace(os.Getenv("MODEL_OVERRIDE"))
 
 	agentCfg, err := loadAgentConfig(configPath)
 	if err != nil {
@@ -66,6 +68,7 @@ func fromEnv(configPath string) (Config, error) {
 		AgentID:        agentID,
 		GatewayAddress: gatewayAddress,
 		LLMBaseURL:     llmBaseURL,
+		ModelOverride:  modelOverride,
 		SDK:            sdk,
 		AgentBinary:    agentBinary,
 		WorkDir:        workDir,
