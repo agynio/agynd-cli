@@ -37,6 +37,7 @@ func TestFromEnvValid(t *testing.T) {
 	setRequiredEnv(t)
 	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
 	t.Setenv("WORKSPACE_DIR", "/tmp/workdir")
+	t.Setenv("AUTH_TOKEN", " bearer-token ")
 
 	cfg, err := fromEnv(configPath)
 	if err != nil {
@@ -59,6 +60,9 @@ func TestFromEnvValid(t *testing.T) {
 	}
 	if cfg.WorkDir != "/tmp/workdir" {
 		t.Fatalf("unexpected work dir: %s", cfg.WorkDir)
+	}
+	if cfg.AuthToken != "bearer-token" {
+		t.Fatalf("unexpected auth token: %s", cfg.AuthToken)
 	}
 }
 
