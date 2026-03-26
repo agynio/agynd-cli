@@ -4,16 +4,22 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sync"
 
 	codex "github.com/agynio/codex-sdk-go"
 )
 
 type Bridge struct {
 	tracker *TurnTracker
+	mu      sync.Mutex
+	items   map[string][]codex.ThreadItem
 }
 
 func New(tracker *TurnTracker) *Bridge {
-	return &Bridge{tracker: tracker}
+	return &Bridge{
+		tracker: tracker,
+		items:   make(map[string][]codex.ThreadItem),
+	}
 }
 
 func (b *Bridge) OnTurnStarted(*codex.TurnStartedNotification) {}
@@ -23,11 +29,22 @@ func (b *Bridge) OnTurnCompleted(notification *codex.TurnCompletedNotification) 
 		return
 	}
 	turnID := notification.Turn.ID
+
+	b.mu.Lock()
+	accumulated := b.items[turnID]
+	delete(b.items, turnID)
+	b.mu.Unlock()
+
+	turn := notification.Turn
+	if len(turn.Items) == 0 && len(accumulated) > 0 {
+		turn.Items = accumulated
+	}
+
 	result := TurnResult{
 		ThreadID: notification.ThreadID,
 		TurnID:   turnID,
 	}
-	message, err := extractFinalAnswer(notification.Turn)
+	message, err := extractFinalAnswer(turn)
 	if err != nil {
 		result.Err = err
 	} else {
@@ -38,7 +55,14 @@ func (b *Bridge) OnTurnCompleted(notification *codex.TurnCompletedNotification) 
 
 func (b *Bridge) OnItemStarted(*codex.ItemStartedNotification) {}
 
-func (b *Bridge) OnItemCompleted(*codex.ItemCompletedNotification) {}
+func (b *Bridge) OnItemCompleted(notification *codex.ItemCompletedNotification) {
+	if notification == nil {
+		return
+	}
+	b.mu.Lock()
+	b.items[notification.TurnID] = append(b.items[notification.TurnID], notification.Item)
+	b.mu.Unlock()
+}
 
 func (b *Bridge) OnAgentMessageDelta(*codex.AgentMessageDeltaNotification) {}
 

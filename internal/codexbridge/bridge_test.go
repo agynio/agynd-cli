@@ -84,3 +84,33 @@ func TestExtractFinalAnswerNoAgentMessages(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestBridgeAccumulatesItems(t *testing.T) {
+	tracker := NewTurnTracker()
+	bridge := New(tracker)
+	ch := tracker.Register("turn-acc")
+
+	bridge.OnItemCompleted(&codex.ItemCompletedNotification{
+		ThreadID: "thread-1",
+		TurnID:   "turn-acc",
+		Item:     agentMessageItem("Hi! How are you?", nil),
+	})
+
+	bridge.OnTurnCompleted(&codex.TurnCompletedNotification{
+		ThreadID: "thread-1",
+		Turn: codex.Turn{
+			ID:     "turn-acc",
+			Status: codex.TurnStatusCompleted,
+			Items:  nil,
+		},
+	})
+
+	result := receiveResult(t, ch)
+	if result.Err != nil {
+		t.Fatalf("unexpected error: %v", result.Err)
+	}
+	if result.Message != "Hi! How are you?" {
+		t.Fatalf("unexpected message: %q", result.Message)
+	}
+	assertClosed(t, ch)
+}
