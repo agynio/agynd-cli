@@ -285,7 +285,11 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 
 func (d *Daemon) startCodexThread(ctx context.Context) (string, error) {
 	params := &codex.ThreadStartParams{}
-	if model := strings.TrimSpace(d.agent.GetModel()); model != "" {
+	model := strings.TrimSpace(d.cfg.ModelOverride)
+	if model == "" {
+		model = strings.TrimSpace(d.agent.GetModel())
+	}
+	if model != "" {
 		params.Model = &model
 	}
 	if role := strings.TrimSpace(d.agent.GetRole()); role != "" {
