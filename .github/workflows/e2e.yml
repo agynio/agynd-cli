@@ -8,8 +8,19 @@ on:
 jobs:
   e2e:
     runs-on: ubuntu-latest
+    env:
+      GOPRIVATE: github.com/agynio/*
     steps:
       - uses: actions/checkout@v4
+
+      - name: Configure Git for private modules
+        run: git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - uses: actions/checkout@v4
+        with:
+          repository: agynio/agn-cli
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: .agn-cli
 
       - uses: actions/setup-go@v5
         with:
@@ -24,9 +35,8 @@ jobs:
       - name: Generate protobuf bindings
         run: |
           buf generate buf.build/agynio/api \
-            --path agynio/api/threads/v1 \
-            --path agynio/api/notifications/v1 \
-            --path agynio/api/agents/v1
+            --path agynio/api/gateway/v1 \
+            --include-imports
 
       - name: Install Codex CLI
         run: npm install -g @openai/codex
@@ -35,3 +45,4 @@ jobs:
         run: go test -v -count=1 -tags e2e ./test/e2e/
         env:
           OPENAI_API_KEY: test-key
+          AGN_REPO_PATH: ${{ github.workspace }}/.agn-cli
