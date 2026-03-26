@@ -20,6 +20,7 @@ type agentConfig struct {
 type Config struct {
 	AgentID        uuid.UUID
 	GatewayAddress string
+	AuthToken      string
 	LLMBaseURL     string
 	ModelOverride  string
 	SDK            string
@@ -64,9 +65,13 @@ func fromEnv(configPath string) (Config, error) {
 		workDir = "/workspace"
 	}
 
+	// AUTH_TOKEN is optional; when empty, no bearer token is sent to the gateway.
+	authToken := strings.TrimSpace(os.Getenv("AUTH_TOKEN"))
+
 	return Config{
 		AgentID:        agentID,
 		GatewayAddress: gatewayAddress,
+		AuthToken:      authToken,
 		LLMBaseURL:     llmBaseURL,
 		ModelOverride:  modelOverride,
 		SDK:            sdk,
