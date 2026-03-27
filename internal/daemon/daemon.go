@@ -79,7 +79,7 @@ func New(ctx context.Context, cfg config.Config, version string) (*Daemon, error
 }
 
 func connectPlatform(ctx context.Context, cfg config.Config) (*platformSetup, error) {
-	gatewayConn, err := platform.DialGateway(cfg.GatewayAddress, cfg.AuthToken)
+	gatewayConn, err := platform.DialGateway(cfg.GatewayAddress)
 	if err != nil {
 		return nil, fmt.Errorf("dial gateway: %w", err)
 	}

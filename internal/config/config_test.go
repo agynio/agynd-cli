@@ -13,8 +13,6 @@ const validAgentID = "550e8400-e29b-41d4-a716-446655440000"
 func setRequiredEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("AGENT_ID", validAgentID)
-	t.Setenv("GATEWAY_ADDRESS", "gateway:1234")
-	t.Setenv("LLM_BASE_URL", "https://llm.example")
 }
 
 func writeAgentConfig(t *testing.T, sdk, bin string) string {
@@ -37,7 +35,8 @@ func TestFromEnvValid(t *testing.T) {
 	setRequiredEnv(t)
 	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
 	t.Setenv("WORKSPACE_DIR", "/tmp/workdir")
-	t.Setenv("AUTH_TOKEN", " bearer-token ")
+	t.Setenv("GATEWAY_ADDRESS", "gateway:1234")
+	t.Setenv("LLM_BASE_URL", "https://llm.example")
 
 	cfg, err := fromEnv(configPath)
 	if err != nil {
@@ -60,9 +59,6 @@ func TestFromEnvValid(t *testing.T) {
 	}
 	if cfg.WorkDir != "/tmp/workdir" {
 		t.Fatalf("unexpected work dir: %s", cfg.WorkDir)
-	}
-	if cfg.AuthToken != "bearer-token" {
-		t.Fatalf("unexpected auth token: %s", cfg.AuthToken)
 	}
 }
 
@@ -101,8 +97,6 @@ func TestFromEnvMissingRequired(t *testing.T) {
 		expected string
 	}{
 		{name: "agent-id", missing: "AGENT_ID", expected: "AGENT_ID"},
-		{name: "gateway", missing: "GATEWAY_ADDRESS", expected: "GATEWAY_ADDRESS"},
-		{name: "llm-base-url", missing: "LLM_BASE_URL", expected: "LLM_BASE_URL"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -131,6 +125,34 @@ func TestFromEnvDefaults(t *testing.T) {
 	}
 	if cfg.WorkDir != "/workspace" {
 		t.Fatalf("expected default workspace dir, got %s", cfg.WorkDir)
+	}
+}
+
+func TestFromEnvGatewayDefault(t *testing.T) {
+	setRequiredEnv(t)
+	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	t.Setenv("GATEWAY_ADDRESS", "")
+
+	cfg, err := fromEnv(configPath)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.GatewayAddress != "gateway.ziti:443" {
+		t.Fatalf("expected default gateway address, got %s", cfg.GatewayAddress)
+	}
+}
+
+func TestFromEnvLLMBaseURLDefault(t *testing.T) {
+	setRequiredEnv(t)
+	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	t.Setenv("LLM_BASE_URL", "")
+
+	cfg, err := fromEnv(configPath)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.LLMBaseURL != "http://llm-proxy.ziti:443/v1" {
+		t.Fatalf("expected default LLM base URL, got %s", cfg.LLMBaseURL)
 	}
 }
 
