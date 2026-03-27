@@ -20,7 +20,6 @@ type agentConfig struct {
 type Config struct {
 	AgentID        uuid.UUID
 	GatewayAddress string
-	AuthToken      string
 	LLMBaseURL     string
 	ModelOverride  string
 	SDK            string
@@ -39,11 +38,11 @@ func fromEnv(configPath string) (Config, error) {
 	}
 	gatewayAddress := strings.TrimSpace(os.Getenv("GATEWAY_ADDRESS"))
 	if gatewayAddress == "" {
-		return Config{}, fmt.Errorf("GATEWAY_ADDRESS is required")
+		gatewayAddress = "gateway.ziti:443"
 	}
 	llmBaseURL := strings.TrimSpace(os.Getenv("LLM_BASE_URL"))
 	if llmBaseURL == "" {
-		return Config{}, fmt.Errorf("LLM_BASE_URL is required")
+		llmBaseURL = "http://llm-proxy.ziti:443/v1"
 	}
 	modelOverride := strings.TrimSpace(os.Getenv("MODEL_OVERRIDE"))
 
@@ -65,13 +64,9 @@ func fromEnv(configPath string) (Config, error) {
 		workDir = "/workspace"
 	}
 
-	// AUTH_TOKEN is optional; when empty, no bearer token is sent to the gateway.
-	authToken := strings.TrimSpace(os.Getenv("AUTH_TOKEN"))
-
 	return Config{
 		AgentID:        agentID,
 		GatewayAddress: gatewayAddress,
-		AuthToken:      authToken,
 		LLMBaseURL:     llmBaseURL,
 		ModelOverride:  modelOverride,
 		SDK:            sdk,
