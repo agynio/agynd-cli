@@ -79,6 +79,52 @@ func New(ctx context.Context, cfg config.Config, version string) (*Daemon, error
 }
 
 func connectPlatform(ctx context.Context, cfg config.Config) (*platformSetup, error) {
+	backoff := []time.Duration{
+		1 * time.Second,
+		2 * time.Second,
+		4 * time.Second,
+		8 * time.Second,
+		15 * time.Second,
+	}
+	var lastErr error
+	for i, delay := range backoff {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		setup, err := tryConnectPlatform(ctx, cfg)
+		if err == nil {
+			return setup, nil
+		}
+		lastErr = err
+		log.Printf(
+			"platform connect attempt %d/%d failed: %v; retrying in %s",
+			i+1,
+			len(backoff)+1,
+			err,
+			delay,
+		)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	setup, err := tryConnectPlatform(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"platform connect failed after %d attempts: %w (previous: %v)",
+			len(backoff)+1,
+			err,
+			lastErr,
+		)
+	}
+	return setup, nil
+}
+
+func tryConnectPlatform(ctx context.Context, cfg config.Config) (*platformSetup, error) {
 	gatewayConn, err := platform.DialGateway(cfg.GatewayAddress)
 	if err != nil {
 		return nil, fmt.Errorf("dial gateway: %w", err)
