@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"strings"
 	"sync"
@@ -26,6 +27,7 @@ const (
 	turnCompletionTimeout       = 5 * time.Minute
 	messagePublishTimeout       = 15 * time.Second
 	messageAckTimeout           = 15 * time.Second
+	mcpReadyTimeout             = 120 * time.Second
 )
 
 const (
@@ -277,6 +279,9 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 	}
 	codexThreadID, ok := d.mapping.CodexForPlatform(threadID)
 	if !ok {
+		if err := waitForMCPServers(ctx, d.cfg.MCPServers, mcpReadyTimeout); err != nil {
+			return err
+		}
 		codexThreadID, err = d.startCodexThread(ctx)
 		if err != nil {
 			return err
@@ -327,6 +332,33 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 		d.tracker.Cancel(turnID)
 		return completionCtx.Err()
 	}
+}
+
+func waitForMCPServers(ctx context.Context, servers []config.MCPServer, timeout time.Duration) error {
+	if len(servers) == 0 {
+		return nil
+	}
+	deadline := time.After(timeout)
+	for _, server := range servers {
+		addr := fmt.Sprintf("localhost:%d", server.Port)
+		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-deadline:
+				return fmt.Errorf("MCP server %s at %s not ready after %s", server.Name, addr, timeout)
+			default:
+				conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
+				if err == nil {
+					_ = conn.Close()
+					goto nextServer
+				}
+				time.Sleep(2 * time.Second)
+			}
+		}
+	nextServer:
+	}
+	return nil
 }
 
 func (d *Daemon) startCodexThread(ctx context.Context) (string, error) {
