@@ -10,6 +10,8 @@ import (
 )
 
 const codexConfigTemplate = `model_provider = "platform"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
 
 [model_providers.platform]
 name = "Agyn LLM"
