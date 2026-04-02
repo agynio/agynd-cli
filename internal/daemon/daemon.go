@@ -166,7 +166,7 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 	tracker := codexbridge.NewTurnTracker()
 	bridge := codexbridge.New(tracker)
 	threadsMapping := codexbridge.NewThreadMapping()
-	codexHome, err := writeCodexConfig(cfg.LLMBaseURL)
+	codexHome, err := writeCodexConfig(cfg.LLMBaseURL, cfg.MCPServers)
 	if err != nil {
 		_ = setup.gatewayConn.Close()
 		return nil, err

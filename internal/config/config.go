@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/agynio/agynd-cli/internal/uuidutil"
@@ -17,6 +18,11 @@ type agentConfig struct {
 	Bin string `json:"bin"`
 }
 
+type MCPServer struct {
+	Name string
+	Port int
+}
+
 type Config struct {
 	AgentID        uuid.UUID
 	GatewayAddress string
@@ -25,6 +31,7 @@ type Config struct {
 	SDK            string
 	AgentBinary    string
 	WorkDir        string
+	MCPServers     []MCPServer
 }
 
 func FromEnv() (Config, error) {
@@ -45,6 +52,11 @@ func fromEnv(configPath string) (Config, error) {
 		llmBaseURL = "http://llm-proxy.ziti:443/v1"
 	}
 	modelOverride := strings.TrimSpace(os.Getenv("MODEL_OVERRIDE"))
+
+	mcpServers, err := parseMCPServers(os.Getenv("AGENT_MCP_SERVERS"))
+	if err != nil {
+		return Config{}, err
+	}
 
 	agentCfg, err := loadAgentConfig(configPath)
 	if err != nil {
@@ -72,6 +84,7 @@ func fromEnv(configPath string) (Config, error) {
 		SDK:            sdk,
 		AgentBinary:    agentBinary,
 		WorkDir:        workDir,
+		MCPServers:     mcpServers,
 	}, nil
 }
 
@@ -85,4 +98,37 @@ func loadAgentConfig(path string) (agentConfig, error) {
 		return agentConfig{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	return cfg, nil
+}
+
+func parseMCPServers(raw string) ([]MCPServer, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	entries := strings.Split(raw, ",")
+	servers := make([]MCPServer, 0, len(entries))
+	for _, entry := range entries {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			return nil, fmt.Errorf("AGENT_MCP_SERVERS contains empty entry")
+		}
+		parts := strings.Split(entry, ":")
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("AGENT_MCP_SERVERS entry %q must be name:port", entry)
+		}
+		name := strings.TrimSpace(parts[0])
+		if name == "" {
+			return nil, fmt.Errorf("AGENT_MCP_SERVERS entry %q missing name", entry)
+		}
+		portRaw := strings.TrimSpace(parts[1])
+		if portRaw == "" {
+			return nil, fmt.Errorf("AGENT_MCP_SERVERS entry %q missing port", entry)
+		}
+		port, err := strconv.Atoi(portRaw)
+		if err != nil || port <= 0 {
+			return nil, fmt.Errorf("AGENT_MCP_SERVERS entry %q has invalid port", entry)
+		}
+		servers = append(servers, MCPServer{Name: name, Port: port})
+	}
+	return servers, nil
 }
