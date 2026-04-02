@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -12,6 +13,8 @@ import (
 )
 
 const agentConfigPath = "/agyn-bin/config.json"
+
+var mcpServerNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
 type agentConfig struct {
 	SDK string `json:"sdk"`
@@ -120,12 +123,15 @@ func parseMCPServers(raw string) ([]MCPServer, error) {
 		if name == "" {
 			return nil, fmt.Errorf("AGENT_MCP_SERVERS entry %q missing name", entry)
 		}
+		if !mcpServerNamePattern.MatchString(name) {
+			return nil, fmt.Errorf("AGENT_MCP_SERVERS entry %q has invalid name", entry)
+		}
 		portRaw := strings.TrimSpace(parts[1])
 		if portRaw == "" {
 			return nil, fmt.Errorf("AGENT_MCP_SERVERS entry %q missing port", entry)
 		}
 		port, err := strconv.Atoi(portRaw)
-		if err != nil || port <= 0 {
+		if err != nil || port <= 0 || port > 65535 {
 			return nil, fmt.Errorf("AGENT_MCP_SERVERS entry %q has invalid port", entry)
 		}
 		servers = append(servers, MCPServer{Name: name, Port: port})

@@ -216,6 +216,9 @@ func TestFromEnvMCPServersMalformed(t *testing.T) {
 		{name: "missing-port", value: "memory"},
 		{name: "missing-name", value: ":8100"},
 		{name: "invalid-port", value: "memory:abc"},
+		{name: "port-too-large", value: "memory:65536"},
+		{name: "invalid-name-uppercase", value: "Memory:8100"},
+		{name: "invalid-name-hyphen", value: "mem-ory:8100"},
 		{name: "empty-entry", value: "memory:8100,"},
 	}
 	for _, test := range tests {
