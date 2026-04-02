@@ -156,6 +156,88 @@ func TestFromEnvLLMBaseURLDefault(t *testing.T) {
 	}
 }
 
+func TestFromEnvMCPServersEmpty(t *testing.T) {
+	setRequiredEnv(t)
+	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	t.Setenv("AGENT_MCP_SERVERS", "")
+
+	cfg, err := fromEnv(configPath)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.MCPServers != nil {
+		t.Fatalf("expected nil MCP servers, got %#v", cfg.MCPServers)
+	}
+}
+
+func TestFromEnvMCPServersSingle(t *testing.T) {
+	setRequiredEnv(t)
+	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	t.Setenv("AGENT_MCP_SERVERS", "memory:8100")
+
+	cfg, err := fromEnv(configPath)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(cfg.MCPServers) != 1 {
+		t.Fatalf("expected 1 MCP server, got %d", len(cfg.MCPServers))
+	}
+	server := cfg.MCPServers[0]
+	if server.Name != "memory" || server.Port != 8100 {
+		t.Fatalf("unexpected MCP server: %#v", server)
+	}
+}
+
+func TestFromEnvMCPServersMultiple(t *testing.T) {
+	setRequiredEnv(t)
+	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	t.Setenv("AGENT_MCP_SERVERS", "memory:8100, cache:8200")
+
+	cfg, err := fromEnv(configPath)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(cfg.MCPServers) != 2 {
+		t.Fatalf("expected 2 MCP servers, got %d", len(cfg.MCPServers))
+	}
+	if cfg.MCPServers[0].Name != "memory" || cfg.MCPServers[0].Port != 8100 {
+		t.Fatalf("unexpected first MCP server: %#v", cfg.MCPServers[0])
+	}
+	if cfg.MCPServers[1].Name != "cache" || cfg.MCPServers[1].Port != 8200 {
+		t.Fatalf("unexpected second MCP server: %#v", cfg.MCPServers[1])
+	}
+}
+
+func TestFromEnvMCPServersMalformed(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+	}{
+		{name: "missing-port", value: "memory"},
+		{name: "missing-name", value: ":8100"},
+		{name: "invalid-port", value: "memory:abc"},
+		{name: "port-too-large", value: "memory:65536"},
+		{name: "invalid-name-uppercase", value: "Memory:8100"},
+		{name: "invalid-name-hyphen", value: "mem-ory:8100"},
+		{name: "empty-entry", value: "memory:8100,"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			setRequiredEnv(t)
+			configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+			t.Setenv("AGENT_MCP_SERVERS", test.value)
+
+			_, err := fromEnv(configPath)
+			if err == nil {
+				t.Fatalf("expected error for %s", test.value)
+			}
+			if !strings.Contains(err.Error(), "AGENT_MCP_SERVERS") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func TestFromEnvMissingConfigFile(t *testing.T) {
 	setRequiredEnv(t)
 	dir := t.TempDir()
