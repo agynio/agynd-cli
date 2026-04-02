@@ -338,25 +338,27 @@ func waitForMCPServers(ctx context.Context, servers []config.MCPServer, timeout 
 	if len(servers) == 0 {
 		return nil
 	}
-	deadline := time.After(timeout)
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
 	for _, server := range servers {
 		addr := fmt.Sprintf("localhost:%d", server.Port)
+		attempt := 0
 		for {
+			attempt++
+			conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
+			if err == nil {
+				_ = conn.Close()
+				break
+			}
+			log.Printf("waiting for MCP server %s at %s (attempt %d): %v", server.Name, addr, attempt, err)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-deadline:
+			case <-deadline.C:
 				return fmt.Errorf("MCP server %s at %s not ready after %s", server.Name, addr, timeout)
-			default:
-				conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
-				if err == nil {
-					_ = conn.Close()
-					goto nextServer
-				}
-				time.Sleep(2 * time.Second)
+			case <-time.After(2 * time.Second):
 			}
 		}
-	nextServer:
 	}
 	return nil
 }
