@@ -25,7 +25,16 @@ func TestWriteCodexConfig(t *testing.T) {
 		t.Fatalf("expected config to be readable, got %v", err)
 	}
 
-	expected := fmt.Sprintf(codexConfigTemplate, baseURL)
+	expected := fmt.Sprintf(`model_provider = "platform"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+
+[model_providers.platform]
+name = "Agyn LLM"
+base_url = %q
+env_key = "OPENAI_API_KEY"
+wire_api = "responses"
+`, baseURL)
 	if string(content) != expected {
 		t.Fatalf("expected config %q, got %q", expected, string(content))
 	}
@@ -51,7 +60,16 @@ func TestWriteCodexConfigWithMCPServers(t *testing.T) {
 		t.Fatalf("expected config to be readable, got %v", err)
 	}
 
-	expected := fmt.Sprintf(codexConfigTemplate, baseURL) +
+	expected := fmt.Sprintf(`model_provider = "platform"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+
+[model_providers.platform]
+name = "Agyn LLM"
+base_url = %q
+env_key = "OPENAI_API_KEY"
+wire_api = "responses"
+`, baseURL) +
 		"\n[mcp_servers.memory]\n" +
 		"url = \"http://localhost:8100/mcp\"\n" +
 		"required = true\n" +
