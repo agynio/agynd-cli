@@ -37,6 +37,7 @@ func TestFromEnvValid(t *testing.T) {
 	t.Setenv("WORKSPACE_DIR", "/tmp/workdir")
 	t.Setenv("GATEWAY_ADDRESS", "gateway:1234")
 	t.Setenv("LLM_BASE_URL", "https://llm.example")
+	t.Setenv("LLM_API_TOKEN", "token-123")
 
 	cfg, err := fromEnv(configPath)
 	if err != nil {
@@ -51,6 +52,9 @@ func TestFromEnvValid(t *testing.T) {
 	if cfg.LLMBaseURL != "https://llm.example" {
 		t.Fatalf("unexpected LLM base URL: %s", cfg.LLMBaseURL)
 	}
+	if cfg.LLMAPIToken != "token-123" {
+		t.Fatalf("unexpected LLM API token: %s", cfg.LLMAPIToken)
+	}
 	if cfg.SDK != "codex" {
 		t.Fatalf("unexpected sdk: %s", cfg.SDK)
 	}
@@ -62,31 +66,17 @@ func TestFromEnvValid(t *testing.T) {
 	}
 }
 
-func TestFromEnvModelOverride(t *testing.T) {
+func TestFromEnvLLMAPITokenDefault(t *testing.T) {
 	setRequiredEnv(t)
 	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
-	t.Setenv("MODEL_OVERRIDE", "gpt-4")
+	t.Setenv("LLM_API_TOKEN", "")
 
 	cfg, err := fromEnv(configPath)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if cfg.ModelOverride != "gpt-4" {
-		t.Fatalf("unexpected model override: %s", cfg.ModelOverride)
-	}
-}
-
-func TestFromEnvModelOverrideDefault(t *testing.T) {
-	setRequiredEnv(t)
-	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
-	t.Setenv("MODEL_OVERRIDE", "")
-
-	cfg, err := fromEnv(configPath)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if cfg.ModelOverride != "" {
-		t.Fatalf("expected empty model override, got %q", cfg.ModelOverride)
+	if cfg.LLMAPIToken != "platform" {
+		t.Fatalf("expected default LLM API token, got %q", cfg.LLMAPIToken)
 	}
 }
 

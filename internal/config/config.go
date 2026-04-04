@@ -30,7 +30,7 @@ type Config struct {
 	AgentID        uuid.UUID
 	GatewayAddress string
 	LLMBaseURL     string
-	ModelOverride  string
+	LLMAPIToken    string
 	SDK            string
 	AgentBinary    string
 	WorkDir        string
@@ -54,7 +54,10 @@ func fromEnv(configPath string) (Config, error) {
 	if llmBaseURL == "" {
 		llmBaseURL = "http://llm-proxy.ziti:443/v1"
 	}
-	modelOverride := strings.TrimSpace(os.Getenv("MODEL_OVERRIDE"))
+	llmAPIToken := strings.TrimSpace(os.Getenv("LLM_API_TOKEN"))
+	if llmAPIToken == "" {
+		llmAPIToken = "platform"
+	}
 
 	mcpServers, err := parseMCPServers(os.Getenv("AGENT_MCP_SERVERS"))
 	if err != nil {
@@ -83,7 +86,7 @@ func fromEnv(configPath string) (Config, error) {
 		AgentID:        agentID,
 		GatewayAddress: gatewayAddress,
 		LLMBaseURL:     llmBaseURL,
-		ModelOverride:  modelOverride,
+		LLMAPIToken:    llmAPIToken,
 		SDK:            sdk,
 		AgentBinary:    agentBinary,
 		WorkDir:        workDir,

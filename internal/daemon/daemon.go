@@ -178,7 +178,7 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 		codex.WithWorkDir(cfg.WorkDir),
 		codex.WithEnv(map[string]string{
 			"CODEX_HOME":     codexHome,
-			"OPENAI_API_KEY": "platform",
+			"OPENAI_API_KEY": cfg.LLMAPIToken,
 		}),
 		codex.WithNotificationHandler(bridge),
 		codex.WithApprovalHandler(codex.AutoApprovalHandler{}),
@@ -365,10 +365,7 @@ func waitForMCPServers(ctx context.Context, servers []config.MCPServer, timeout 
 
 func (d *Daemon) startCodexThread(ctx context.Context) (string, error) {
 	params := &codex.ThreadStartParams{}
-	model := strings.TrimSpace(d.cfg.ModelOverride)
-	if model == "" {
-		model = strings.TrimSpace(d.agent.GetModel())
-	}
+	model := strings.TrimSpace(d.agent.GetModel())
 	if model != "" {
 		params.Model = &model
 	}
