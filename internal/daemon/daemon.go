@@ -387,8 +387,15 @@ func (d *Daemon) startCodexThread(ctx context.Context) (string, error) {
 
 func buildInput(message platform.Message) (string, error) {
 	text := strings.TrimSpace(message.Body)
-	if text == "" && len(message.FileIDs) > 0 {
-		text = fmt.Sprintf("Received files: %s", strings.Join(message.FileIDs, ", "))
+	if len(message.FileIDs) > 0 {
+		lines := make([]string, 0, len(message.FileIDs)+1)
+		if text != "" {
+			lines = append(lines, text)
+		}
+		for _, fileID := range message.FileIDs {
+			lines = append(lines, fmt.Sprintf("agyn://file/%s", fileID))
+		}
+		text = strings.Join(lines, "\n")
 	}
 	if text == "" {
 		return "", fmt.Errorf("message %s has no content", message.ID)
