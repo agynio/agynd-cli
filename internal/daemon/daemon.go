@@ -83,9 +83,15 @@ func New(ctx context.Context, cfg config.Config, version string) (*Daemon, error
 func connectPlatform(ctx context.Context, cfg config.Config) (*platformSetup, error) {
 	backoff := []time.Duration{
 		1 * time.Second,
+		1 * time.Second,
 		2 * time.Second,
-		4 * time.Second,
+		3 * time.Second,
+		5 * time.Second,
+		5 * time.Second,
 		8 * time.Second,
+		10 * time.Second,
+		15 * time.Second,
+		15 * time.Second,
 		15 * time.Second,
 	}
 	var lastErr error
