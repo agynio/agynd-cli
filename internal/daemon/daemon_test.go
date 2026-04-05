@@ -51,13 +51,28 @@ func TestBuildInputFilesOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if got != "Received files: file-a, file-b" {
+	if got != "agyn://file/file-a\nagyn://file/file-b" {
 		t.Fatalf("unexpected file-only input: %q", got)
 	}
 }
 
+func TestBuildInputTextWithFiles(t *testing.T) {
+	message := platform.Message{
+		ID:      "msg-3",
+		Body:    " status ",
+		FileIDs: []string{"file-a", "file-b"},
+	}
+	got, err := buildInput(message)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got != "status\nagyn://file/file-a\nagyn://file/file-b" {
+		t.Fatalf("unexpected text-with-files input: %q", got)
+	}
+}
+
 func TestBuildInputEmpty(t *testing.T) {
-	message := platform.Message{ID: "msg-3"}
+	message := platform.Message{ID: "msg-4"}
 	_, err := buildInput(message)
 	if err == nil {
 		t.Fatal("expected error for empty message")
