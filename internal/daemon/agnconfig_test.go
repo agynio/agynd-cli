@@ -8,7 +8,9 @@ import (
 
 func TestWriteAgnConfig(t *testing.T) {
 	baseURL := "https://example.com"
-	agnDir, configPath, err := writeAgnConfig(baseURL)
+	apiKey := "test-api-key"
+	model := "test-model-id"
+	agnDir, configPath, err := writeAgnConfig(baseURL, apiKey, model)
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
@@ -21,7 +23,7 @@ func TestWriteAgnConfig(t *testing.T) {
 		t.Fatalf("expected config to be readable, got %v", err)
 	}
 
-	expected := fmt.Sprintf(agnConfigTemplate, baseURL, agnDefaultAPIKey, agnDefaultModel)
+	expected := fmt.Sprintf(agnConfigTemplate, baseURL, apiKey, model)
 	if string(content) != expected {
 		t.Fatalf("expected config %q, got %q", expected, string(content))
 	}

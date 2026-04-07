@@ -21,7 +21,7 @@ func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daem
 		return nil, err
 	}
 
-	agnDir, configPath, err := writeAgnConfig(cfg.LLMBaseURL)
+	agnDir, configPath, err := writeAgnConfig(cfg.LLMBaseURL, cfg.LLMAPIToken, setup.agent.GetModel())
 	if err != nil {
 		_ = setup.gatewayConn.Close()
 		return nil, err
