@@ -3,12 +3,16 @@ package daemon
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/agynio/agynd-cli/internal/config"
 )
 
 func TestWriteAgnConfig(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
 	baseURL := "https://example.com"
 	apiKey := "test-api-key"
 	model := "test-model-id"
@@ -16,9 +20,16 @@ func TestWriteAgnConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
-	t.Cleanup(func() {
-		_ = os.RemoveAll(agnDir)
-	})
+
+	expectedDir := filepath.Join(tmpHome, ".agyn", "agn")
+	if agnDir != expectedDir {
+		t.Fatalf("expected agn dir %q, got %q", expectedDir, agnDir)
+	}
+
+	expectedPath := filepath.Join(expectedDir, "config.yaml")
+	if configPath != expectedPath {
+		t.Fatalf("expected config path %q, got %q", expectedPath, configPath)
+	}
 
 	content, err := os.ReadFile(configPath)
 	if err != nil {
@@ -32,6 +43,9 @@ func TestWriteAgnConfig(t *testing.T) {
 }
 
 func TestWriteAgnConfigWithMCPServers(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
 	baseURL := "https://example.com"
 	apiKey := "test-api-key"
 	model := "test-model-id"
@@ -43,9 +57,16 @@ func TestWriteAgnConfigWithMCPServers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
-	t.Cleanup(func() {
-		_ = os.RemoveAll(agnDir)
-	})
+
+	expectedDir := filepath.Join(tmpHome, ".agyn", "agn")
+	if agnDir != expectedDir {
+		t.Fatalf("expected agn dir %q, got %q", expectedDir, agnDir)
+	}
+
+	expectedPath := filepath.Join(expectedDir, "config.yaml")
+	if configPath != expectedPath {
+		t.Fatalf("expected config path %q, got %q", expectedPath, configPath)
+	}
 
 	content, err := os.ReadFile(configPath)
 	if err != nil {

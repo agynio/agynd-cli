@@ -10,14 +10,19 @@ import (
 )
 
 func TestWriteCodexConfig(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
 	baseURL := "https://example.com"
 	codexHome, err := writeCodexConfig(baseURL, nil)
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
-	t.Cleanup(func() {
-		_ = os.RemoveAll(codexHome)
-	})
+
+	expectedHome := filepath.Join(tmpHome, ".codex")
+	if codexHome != expectedHome {
+		t.Fatalf("expected codex home %q, got %q", expectedHome, codexHome)
+	}
 
 	configPath := filepath.Join(codexHome, "config.toml")
 	content, err := os.ReadFile(configPath)
@@ -41,6 +46,9 @@ wire_api = "responses"
 }
 
 func TestWriteCodexConfigWithMCPServers(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
 	baseURL := "https://example.com"
 	mcpServers := []config.MCPServer{
 		{Name: "memory", Port: 8100},
@@ -50,9 +58,11 @@ func TestWriteCodexConfigWithMCPServers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
-	t.Cleanup(func() {
-		_ = os.RemoveAll(codexHome)
-	})
+
+	expectedHome := filepath.Join(tmpHome, ".codex")
+	if codexHome != expectedHome {
+		t.Fatalf("expected codex home %q, got %q", expectedHome, codexHome)
+	}
 
 	configPath := filepath.Join(codexHome, "config.toml")
 	content, err := os.ReadFile(configPath)
