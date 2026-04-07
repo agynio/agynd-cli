@@ -52,7 +52,10 @@ func TestWriteAgnConfigWithMCPServers(t *testing.T) {
 		t.Fatalf("expected config to be readable, got %v", err)
 	}
 
-	expected := agnConfig(baseURL, apiKey, model, mcpServers)
+	expected := fmt.Sprintf(agnConfigTemplate, baseURL, apiKey, model) +
+		"mcp:\n  servers:\n" +
+		"    memory:\n      url: http://localhost:8100/mcp\n" +
+		"    filesystem:\n      url: http://localhost:8200/mcp\n"
 	if string(content) != expected {
 		t.Fatalf("expected config %q, got %q", expected, string(content))
 	}
