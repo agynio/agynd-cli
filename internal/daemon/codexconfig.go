@@ -21,14 +21,17 @@ wire_api = "responses"
 `
 
 func writeCodexConfig(llmBaseURL string, mcpServers []config.MCPServer) (string, error) {
-	codexHome, err := os.MkdirTemp("", "agynd-codex-")
+	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("create codex config dir: %w", err)
+		return "", fmt.Errorf("resolve home directory: %w", err)
+	}
+	codexHome := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(codexHome, 0o700); err != nil {
+		return "", fmt.Errorf("create codex home dir: %w", err)
 	}
 	configPath := filepath.Join(codexHome, "config.toml")
 	payload := codexConfig(llmBaseURL, mcpServers)
 	if err := os.WriteFile(configPath, []byte(payload), 0o600); err != nil {
-		_ = os.RemoveAll(codexHome)
 		return "", fmt.Errorf("write codex config: %w", err)
 	}
 	return codexHome, nil

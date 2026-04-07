@@ -17,14 +17,17 @@ const agnConfigTemplate = `llm:
 `
 
 func writeAgnConfig(llmBaseURL, apiKey, model string, mcpServers []config.MCPServer) (string, string, error) {
-	agnDir, err := os.MkdirTemp("", "agynd-agn-")
+	home, err := os.UserHomeDir()
 	if err != nil {
+		return "", "", fmt.Errorf("resolve home directory: %w", err)
+	}
+	agnDir := filepath.Join(home, ".agyn", "agn")
+	if err := os.MkdirAll(agnDir, 0o700); err != nil {
 		return "", "", fmt.Errorf("create agn config dir: %w", err)
 	}
 	configPath := filepath.Join(agnDir, "config.yaml")
 	payload := agnConfig(llmBaseURL, apiKey, model, mcpServers)
 	if err := os.WriteFile(configPath, []byte(payload), 0o600); err != nil {
-		_ = os.RemoveAll(agnDir)
 		return "", "", fmt.Errorf("write agn config: %w", err)
 	}
 	return agnDir, configPath, nil

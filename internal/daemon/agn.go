@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	agnsdk "github.com/agynio/agn-sdk-go"
@@ -21,7 +20,7 @@ func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daem
 		return nil, err
 	}
 
-	agnDir, configPath, err := writeAgnConfig(cfg.LLMBaseURL, cfg.LLMAPIToken, setup.agent.GetModel(), cfg.MCPServers)
+	_, configPath, err := writeAgnConfig(cfg.LLMBaseURL, cfg.LLMAPIToken, setup.agent.GetModel(), cfg.MCPServers)
 	if err != nil {
 		_ = setup.gatewayConn.Close()
 		return nil, err
@@ -29,7 +28,6 @@ func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daem
 
 	if err := waitForMCPServers(ctx, cfg.MCPServers, mcpReadyTimeout); err != nil {
 		_ = setup.gatewayConn.Close()
-		_ = os.RemoveAll(agnDir)
 		return nil, err
 	}
 
@@ -39,7 +37,6 @@ func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daem
 	})
 	if err != nil {
 		_ = setup.gatewayConn.Close()
-		_ = os.RemoveAll(agnDir)
 		return nil, err
 	}
 
@@ -52,7 +49,6 @@ func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daem
 		subscriber:  subscriber.New(setup.notifications, cfg.AgentID.String()),
 		consumer:    platform.NewConsumer(setup.threads, pageSize, pageTimeout),
 		agn:         agnClient,
-		agnDir:      agnDir,
 		agent:       setup.agent,
 	}, nil
 }
