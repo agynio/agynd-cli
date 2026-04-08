@@ -187,13 +187,14 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}
+	otlpEndpoint := "http://" + tracingproxy.ListenAddress
 	options := []codex.Option{
 		codex.WithBinary(cfg.AgentBinary),
 		codex.WithWorkDir(cfg.WorkDir),
 		codex.WithEnv(map[string]string{
 			"CODEX_HOME":                  codexHome,
 			"OPENAI_API_KEY":              cfg.LLMAPIToken,
-			"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317",
+			"OTEL_EXPORTER_OTLP_ENDPOINT": otlpEndpoint,
 		}),
 		codex.WithNotificationHandler(bridge),
 		codex.WithApprovalHandler(codex.AutoApprovalHandler{}),

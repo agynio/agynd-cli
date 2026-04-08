@@ -124,7 +124,7 @@ func TestProxyForwardsToUpstream(t *testing.T) {
 	}
 	defer proxy.Close()
 
-	conn, err := grpc.NewClient(listenAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(ListenAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		t.Fatalf("dial proxy: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestProxyNoThreadIDPassthrough(t *testing.T) {
 	}
 	defer proxy.Close()
 
-	conn, err := grpc.NewClient(listenAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(ListenAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		t.Fatalf("dial proxy: %v", err)
 	}

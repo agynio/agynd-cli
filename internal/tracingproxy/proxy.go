@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	listenAddress        = "localhost:4317"
+	ListenAddress        = "localhost:4317"
 	threadIDAttributeKey = "agyn.thread.id"
 )
 
@@ -53,10 +53,10 @@ func Start(ctx context.Context, cfg Config) (*Proxy, error) {
 	}
 	collectortracev1.RegisterTraceServiceServer(server, proxy)
 
-	listener, err := net.Listen("tcp", listenAddress)
+	listener, err := net.Listen("tcp", ListenAddress)
 	if err != nil {
 		_ = conn.Close()
-		return nil, fmt.Errorf("listen on %s: %w", listenAddress, err)
+		return nil, fmt.Errorf("listen on %s: %w", ListenAddress, err)
 	}
 
 	go func() {
@@ -79,24 +79,17 @@ func (p *Proxy) Export(ctx context.Context, req *collectortracev1.ExportTraceSer
 }
 
 func (p *Proxy) Close() {
-	if p == nil {
-		return
+	done := make(chan struct{})
+	go func() {
+		p.server.GracefulStop()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		p.server.Stop()
 	}
-	if p.server != nil {
-		done := make(chan struct{})
-		go func() {
-			p.server.GracefulStop()
-			close(done)
-		}()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-			p.server.Stop()
-		}
-	}
-	if p.conn != nil {
-		_ = p.conn.Close()
-	}
+	_ = p.conn.Close()
 }
 
 func injectThreadID(req *collectortracev1.ExportTraceServiceRequest, threadID string) {

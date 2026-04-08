@@ -41,11 +41,12 @@ func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daem
 		return nil, err
 	}
 
+	otlpEndpoint := "http://" + tracingproxy.ListenAddress
 	agnClient, err := agnsdk.Start(ctx, agnsdk.Options{
 		BinaryPath: cfg.AgentBinary,
 		Env: []string{
 			"AGN_CONFIG_PATH=" + configPath,
-			"OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317",
+			"OTEL_EXPORTER_OTLP_ENDPOINT=" + otlpEndpoint,
 		},
 	})
 	if err != nil {
