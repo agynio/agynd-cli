@@ -16,6 +16,7 @@ import (
 	"github.com/agynio/agynd-cli/internal/config"
 	"github.com/agynio/agynd-cli/internal/platform"
 	"github.com/agynio/agynd-cli/internal/subscriber"
+	"github.com/agynio/agynd-cli/internal/tracingproxy"
 	codex "github.com/agynio/codex-sdk-go"
 )
 
@@ -36,18 +37,19 @@ const (
 )
 
 type Daemon struct {
-	cfg         config.Config
-	sdk         string
-	gatewayConn platformConn
-	threads     *platform.Threads
-	agents      gatewayv1.AgentsGatewayClient
-	subscriber  *subscriber.Subscriber
-	consumer    *platform.Consumer
-	codex       *codex.Client
-	mapping     *codexbridge.ThreadMapping
-	tracker     *codexbridge.TurnTracker
-	agn         *agnsdk.Client
-	agent       *agentsv1.Agent
+	cfg          config.Config
+	sdk          string
+	gatewayConn  platformConn
+	threads      *platform.Threads
+	agents       gatewayv1.AgentsGatewayClient
+	subscriber   *subscriber.Subscriber
+	consumer     *platform.Consumer
+	codex        *codex.Client
+	mapping      *codexbridge.ThreadMapping
+	tracker      *codexbridge.TurnTracker
+	agn          *agnsdk.Client
+	agent        *agentsv1.Agent
+	tracingProxy *tracingproxy.Proxy
 
 	syncMu sync.Mutex
 }
@@ -176,12 +178,23 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}
+
+	tracingProxy, err := tracingproxy.Start(ctx, tracingproxy.Config{
+		TracingAddress: cfg.TracingAddress,
+		ThreadID:       cfg.ThreadID,
+	})
+	if err != nil {
+		_ = setup.gatewayConn.Close()
+		return nil, err
+	}
+	otlpEndpoint := "http://" + tracingproxy.ListenAddress
 	options := []codex.Option{
 		codex.WithBinary(cfg.AgentBinary),
 		codex.WithWorkDir(cfg.WorkDir),
 		codex.WithEnv(map[string]string{
-			"CODEX_HOME":     codexHome,
-			"OPENAI_API_KEY": cfg.LLMAPIToken,
+			"CODEX_HOME":                  codexHome,
+			"OPENAI_API_KEY":              cfg.LLMAPIToken,
+			"OTEL_EXPORTER_OTLP_ENDPOINT": otlpEndpoint,
 		}),
 		codex.WithNotificationHandler(bridge),
 		codex.WithApprovalHandler(codex.AutoApprovalHandler{}),
@@ -189,22 +202,24 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 	}
 	codexClient, err := codex.NewClient(ctx, options...)
 	if err != nil {
+		tracingProxy.Close()
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}
 
 	return &Daemon{
-		cfg:         cfg,
-		sdk:         SDKCodex,
-		gatewayConn: setup.gatewayConn,
-		threads:     setup.threads,
-		agents:      setup.agents,
-		subscriber:  subscriber.New(setup.notifications, cfg.AgentID.String()),
-		consumer:    platform.NewConsumer(setup.threads, pageSize, pageTimeout),
-		codex:       codexClient,
-		mapping:     threadsMapping,
-		tracker:     tracker,
-		agent:       setup.agent,
+		cfg:          cfg,
+		sdk:          SDKCodex,
+		gatewayConn:  setup.gatewayConn,
+		threads:      setup.threads,
+		agents:       setup.agents,
+		subscriber:   subscriber.New(setup.notifications, cfg.AgentID.String()),
+		consumer:     platform.NewConsumer(setup.threads, pageSize, pageTimeout),
+		codex:        codexClient,
+		mapping:      threadsMapping,
+		tracker:      tracker,
+		agent:        setup.agent,
+		tracingProxy: tracingProxy,
 	}, nil
 }
 
@@ -214,6 +229,9 @@ func (d *Daemon) Close() {
 	}
 	if d.agn != nil {
 		_ = d.agn.Close()
+	}
+	if d.tracingProxy != nil {
+		d.tracingProxy.Close()
 	}
 	if d.gatewayConn != nil {
 		_ = d.gatewayConn.Close()

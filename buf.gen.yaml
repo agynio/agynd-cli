@@ -5,6 +5,9 @@ managed:
   override:
     - file_option: go_package_prefix
       value: github.com/agynio/agynd-cli/.gen/go
+  disable:
+    - file_option: go_package_prefix
+      module: buf.build/opentelemetry/opentelemetry
 
 plugins:
   - remote: buf.build/protocolbuffers/go
