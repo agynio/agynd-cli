@@ -29,6 +29,8 @@ type MCPServer struct {
 type Config struct {
 	AgentID        uuid.UUID
 	GatewayAddress string
+	TracingAddress string
+	ThreadID       string
 	LLMBaseURL     string
 	LLMAPIToken    string
 	SDK            string
@@ -50,6 +52,11 @@ func fromEnv(configPath string) (Config, error) {
 	if gatewayAddress == "" {
 		gatewayAddress = "gateway.ziti:443"
 	}
+	tracingAddress := strings.TrimSpace(os.Getenv("TRACING_ADDRESS"))
+	if tracingAddress == "" {
+		tracingAddress = "tracing.ziti:443"
+	}
+	threadID := strings.TrimSpace(os.Getenv("THREAD_ID"))
 	llmBaseURL := strings.TrimSpace(os.Getenv("LLM_BASE_URL"))
 	if llmBaseURL == "" {
 		llmBaseURL = "http://llm-proxy.ziti:443/v1"
@@ -85,6 +92,8 @@ func fromEnv(configPath string) (Config, error) {
 	return Config{
 		AgentID:        agentID,
 		GatewayAddress: gatewayAddress,
+		TracingAddress: tracingAddress,
+		ThreadID:       threadID,
 		LLMBaseURL:     llmBaseURL,
 		LLMAPIToken:    llmAPIToken,
 		SDK:            sdk,

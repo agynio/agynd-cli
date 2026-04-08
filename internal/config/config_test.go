@@ -36,6 +36,8 @@ func TestFromEnvValid(t *testing.T) {
 	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
 	t.Setenv("WORKSPACE_DIR", "/tmp/workdir")
 	t.Setenv("GATEWAY_ADDRESS", "gateway:1234")
+	t.Setenv("TRACING_ADDRESS", "tracing:5678")
+	t.Setenv("THREAD_ID", "thread-123")
 	t.Setenv("LLM_BASE_URL", "https://llm.example")
 	t.Setenv("LLM_API_TOKEN", "token-123")
 
@@ -48,6 +50,12 @@ func TestFromEnvValid(t *testing.T) {
 	}
 	if cfg.GatewayAddress != "gateway:1234" {
 		t.Fatalf("unexpected gateway address: %s", cfg.GatewayAddress)
+	}
+	if cfg.TracingAddress != "tracing:5678" {
+		t.Fatalf("unexpected tracing address: %s", cfg.TracingAddress)
+	}
+	if cfg.ThreadID != "thread-123" {
+		t.Fatalf("unexpected thread id: %s", cfg.ThreadID)
 	}
 	if cfg.LLMBaseURL != "https://llm.example" {
 		t.Fatalf("unexpected LLM base URL: %s", cfg.LLMBaseURL)
@@ -129,6 +137,62 @@ func TestFromEnvGatewayDefault(t *testing.T) {
 	}
 	if cfg.GatewayAddress != "gateway.ziti:443" {
 		t.Fatalf("expected default gateway address, got %s", cfg.GatewayAddress)
+	}
+}
+
+func TestFromEnvTracingAddressDefault(t *testing.T) {
+	setRequiredEnv(t)
+	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	t.Setenv("TRACING_ADDRESS", "")
+
+	cfg, err := fromEnv(configPath)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.TracingAddress != "tracing.ziti:443" {
+		t.Fatalf("expected default tracing address, got %s", cfg.TracingAddress)
+	}
+}
+
+func TestFromEnvTracingAddressCustom(t *testing.T) {
+	setRequiredEnv(t)
+	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	t.Setenv("TRACING_ADDRESS", "tracing.local:9999")
+
+	cfg, err := fromEnv(configPath)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.TracingAddress != "tracing.local:9999" {
+		t.Fatalf("unexpected tracing address: %s", cfg.TracingAddress)
+	}
+}
+
+func TestFromEnvThreadID(t *testing.T) {
+	setRequiredEnv(t)
+	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	t.Setenv("THREAD_ID", "  thread-abc ")
+
+	cfg, err := fromEnv(configPath)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.ThreadID != "thread-abc" {
+		t.Fatalf("unexpected thread id: %q", cfg.ThreadID)
+	}
+}
+
+func TestFromEnvThreadIDEmpty(t *testing.T) {
+	setRequiredEnv(t)
+	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	t.Setenv("THREAD_ID", "")
+
+	cfg, err := fromEnv(configPath)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.ThreadID != "" {
+		t.Fatalf("expected empty thread id, got %q", cfg.ThreadID)
 	}
 }
 

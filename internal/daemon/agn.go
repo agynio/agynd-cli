@@ -9,6 +9,7 @@ import (
 	"github.com/agynio/agynd-cli/internal/config"
 	"github.com/agynio/agynd-cli/internal/platform"
 	"github.com/agynio/agynd-cli/internal/subscriber"
+	"github.com/agynio/agynd-cli/internal/tracingproxy"
 )
 
 func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daemon, error) {
@@ -31,25 +32,39 @@ func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daem
 		return nil, err
 	}
 
-	agnClient, err := agnsdk.Start(ctx, agnsdk.Options{
-		BinaryPath: cfg.AgentBinary,
-		Env:        []string{"AGN_CONFIG_PATH=" + configPath},
+	tracingProxy, err := tracingproxy.Start(ctx, tracingproxy.Config{
+		TracingAddress: cfg.TracingAddress,
+		ThreadID:       cfg.ThreadID,
 	})
 	if err != nil {
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}
 
+	agnClient, err := agnsdk.Start(ctx, agnsdk.Options{
+		BinaryPath: cfg.AgentBinary,
+		Env: []string{
+			"AGN_CONFIG_PATH=" + configPath,
+			"OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317",
+		},
+	})
+	if err != nil {
+		tracingProxy.Close()
+		_ = setup.gatewayConn.Close()
+		return nil, err
+	}
+
 	return &Daemon{
-		cfg:         cfg,
-		sdk:         SDKAgn,
-		gatewayConn: setup.gatewayConn,
-		threads:     setup.threads,
-		agents:      setup.agents,
-		subscriber:  subscriber.New(setup.notifications, cfg.AgentID.String()),
-		consumer:    platform.NewConsumer(setup.threads, pageSize, pageTimeout),
-		agn:         agnClient,
-		agent:       setup.agent,
+		cfg:          cfg,
+		sdk:          SDKAgn,
+		gatewayConn:  setup.gatewayConn,
+		threads:      setup.threads,
+		agents:       setup.agents,
+		subscriber:   subscriber.New(setup.notifications, cfg.AgentID.String()),
+		consumer:     platform.NewConsumer(setup.threads, pageSize, pageTimeout),
+		agn:          agnClient,
+		agent:        setup.agent,
+		tracingProxy: tracingProxy,
 	}, nil
 }
 
