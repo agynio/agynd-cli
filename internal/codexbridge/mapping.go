@@ -15,13 +15,6 @@ func NewThreadMapping() *ThreadMapping {
 	}
 }
 
-func (m *ThreadMapping) Set(platformThreadID, codexThreadID string) {
-	m.SetRecord(ThreadMappingRecord{
-		PlatformThreadID: platformThreadID,
-		CodexThreadID:    codexThreadID,
-	})
-}
-
 func (m *ThreadMapping) SetRecord(record ThreadMappingRecord) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

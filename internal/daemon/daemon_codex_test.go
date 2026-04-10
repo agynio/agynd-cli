@@ -74,3 +74,45 @@ func TestEnsureCodexThreadResumesFromStore(t *testing.T) {
 		t.Fatalf("expected resume params for %q", record.CodexThreadID)
 	}
 }
+
+func TestEnsureCodexThreadStartsNonEphemeral(t *testing.T) {
+	store := codexbridge.NewThreadMappingStore(t.TempDir())
+	client := &fakeCodexClient{}
+	daemon := &Daemon{
+		sdk:          SDKCodex,
+		cfg:          config.Config{WorkDir: "/tmp"},
+		codex:        client,
+		mapping:      codexbridge.NewThreadMapping(),
+		mappingStore: store,
+		agent:        &agentsv1.Agent{},
+	}
+	threadID, err := daemon.ensureCodexThread(context.Background(), "platform-new")
+	if err != nil {
+		t.Fatalf("expected ensureCodexThread to succeed, got %v", err)
+	}
+	if threadID != "codex-started" {
+		t.Fatalf("expected thread id %q, got %q", "codex-started", threadID)
+	}
+	if client.startThreadCalls != 1 {
+		t.Fatalf("expected StartThread to be called once, got %d", client.startThreadCalls)
+	}
+	if client.resumeThreadCalls != 0 {
+		t.Fatalf("expected ResumeThread not to be called, got %d", client.resumeThreadCalls)
+	}
+	if client.startParams == nil || client.startParams.Ephemeral == nil {
+		t.Fatal("expected Ephemeral to be set")
+	}
+	if *client.startParams.Ephemeral {
+		t.Fatal("expected Ephemeral to be false")
+	}
+	stored, ok, err := store.Load("platform-new")
+	if err != nil {
+		t.Fatalf("expected mapping to be saved, got %v", err)
+	}
+	if !ok {
+		t.Fatal("expected mapping to be saved")
+	}
+	if stored.CodexThreadID != "codex-started" {
+		t.Fatalf("expected stored codex id %q, got %q", "codex-started", stored.CodexThreadID)
+	}
+}

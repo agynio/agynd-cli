@@ -351,53 +351,50 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 }
 
 func (d *Daemon) ensureCodexThread(ctx context.Context, platformThreadID string) (string, error) {
+	if d.mappingStore == nil {
+		return "", fmt.Errorf("codex mapping store is not configured")
+	}
 	if record, ok := d.mapping.RecordForPlatform(platformThreadID); ok {
 		updated := record
 		updated.LastUsedAtUnixMs = time.Now().UnixMilli()
 		d.mapping.SetRecord(updated)
-		if d.mappingStore != nil {
-			if err := d.mappingStore.Save(updated); err != nil {
-				return "", err
-			}
+		if err := d.mappingStore.Save(updated); err != nil {
+			return "", err
 		}
 		return record.CodexThreadID, nil
 	}
 	if err := waitForMCPServers(ctx, d.cfg.MCPServers, mcpReadyTimeout); err != nil {
 		return "", err
 	}
-	if d.mappingStore != nil {
-		record, ok, err := d.mappingStore.Load(platformThreadID)
-		if err != nil {
+	record, ok, err := d.mappingStore.Load(platformThreadID)
+	if err != nil {
+		return "", err
+	}
+	if ok {
+		if err := d.resumeCodexThread(ctx, record.CodexThreadID); err != nil {
 			return "", err
 		}
-		if ok {
-			if err := d.resumeCodexThread(ctx, record.CodexThreadID); err != nil {
-				return "", err
-			}
-			record.LastUsedAtUnixMs = time.Now().UnixMilli()
-			d.mapping.SetRecord(record)
-			if err := d.mappingStore.Save(record); err != nil {
-				return "", err
-			}
-			return record.CodexThreadID, nil
+		record.LastUsedAtUnixMs = time.Now().UnixMilli()
+		d.mapping.SetRecord(record)
+		if err := d.mappingStore.Save(record); err != nil {
+			return "", err
 		}
+		return record.CodexThreadID, nil
 	}
 	codexThreadID, err := d.startCodexThread(ctx)
 	if err != nil {
 		return "", err
 	}
 	now := time.Now().UnixMilli()
-	record := codexbridge.ThreadMappingRecord{
+	newRecord := codexbridge.ThreadMappingRecord{
 		PlatformThreadID: platformThreadID,
 		CodexThreadID:    codexThreadID,
 		CreatedAtUnixMs:  now,
 		LastUsedAtUnixMs: now,
 	}
-	d.mapping.SetRecord(record)
-	if d.mappingStore != nil {
-		if err := d.mappingStore.Save(record); err != nil {
-			return "", err
-		}
+	d.mapping.SetRecord(newRecord)
+	if err := d.mappingStore.Save(newRecord); err != nil {
+		return "", err
 	}
 	return codexThreadID, nil
 }
