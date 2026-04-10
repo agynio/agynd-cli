@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,7 +48,6 @@ func (r ThreadMappingRecord) validate() error {
 
 type ThreadMappingStore struct {
 	dir        string
-	legacyDir  string
 	createTemp func(dir, pattern string) (*os.File, error)
 	rename     func(oldpath, newpath string) error
 }
@@ -57,7 +55,6 @@ type ThreadMappingStore struct {
 func NewThreadMappingStore(homeDir string) *ThreadMappingStore {
 	return &ThreadMappingStore{
 		dir:        filepath.Join(homeDir, ".agyn", "codex", "thread-mapping"),
-		legacyDir:  filepath.Join(homeDir, ".codex", "agynd", "thread-mapping"),
 		createTemp: os.CreateTemp,
 		rename:     os.Rename,
 	}
@@ -68,41 +65,14 @@ func (s *ThreadMappingStore) Load(platformThreadID string) (ThreadMappingRecord,
 	if err != nil {
 		return ThreadMappingRecord{}, false, err
 	}
-	legacyPath, err := s.legacyMappingPath(platformThreadID)
+	record, ok, err := s.readRecord(path, platformThreadID)
 	if err != nil {
 		return ThreadMappingRecord{}, false, err
 	}
-	newRecord, ok, err := s.readRecord(path, platformThreadID)
-	if err != nil {
-		return ThreadMappingRecord{}, false, err
-	}
-	if ok {
-		legacyRecord, legacyOk, err := s.readRecord(legacyPath, platformThreadID)
-		if err != nil {
-			log.Printf("codex mapping: legacy read failed for %s: %v", platformThreadID, err)
-			return newRecord, true, nil
-		}
-		if legacyOk && legacyRecord.CodexThreadID != newRecord.CodexThreadID {
-			log.Printf(
-				"codex mapping: legacy codex thread %s differs from current %s for platform %s",
-				legacyRecord.CodexThreadID,
-				newRecord.CodexThreadID,
-				platformThreadID,
-			)
-		}
-		return newRecord, true, nil
-	}
-	legacyRecord, legacyOk, err := s.readRecord(legacyPath, platformThreadID)
-	if err != nil {
-		return ThreadMappingRecord{}, false, err
-	}
-	if !legacyOk {
+	if !ok {
 		return ThreadMappingRecord{}, false, nil
 	}
-	if err := s.Save(legacyRecord); err != nil {
-		return ThreadMappingRecord{}, false, err
-	}
-	return legacyRecord, true, nil
+	return record, true, nil
 }
 
 func (s *ThreadMappingStore) Save(record ThreadMappingRecord) error {
@@ -152,10 +122,6 @@ func (s *ThreadMappingStore) Save(record ThreadMappingRecord) error {
 
 func (s *ThreadMappingStore) mappingPath(platformThreadID string) (string, error) {
 	return mappingPath(s.dir, platformThreadID)
-}
-
-func (s *ThreadMappingStore) legacyMappingPath(platformThreadID string) (string, error) {
-	return mappingPath(s.legacyDir, platformThreadID)
 }
 
 func (s *ThreadMappingStore) readRecord(path, platformThreadID string) (ThreadMappingRecord, bool, error) {
