@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-func TestParseAgentSummarizationValid(t *testing.T) {
-	payload := `{"summarization":{"keepTokens":42,"max_tokens":100,"llm":{"endpoint":"https://sum.example.com","auth":{"apiKeyEnv":"SUM_KEY"},"model":"gpt-4.1-mini"}}}`
+func TestParseAgentSummarizationValidAPIKey(t *testing.T) {
+	payload := `{"summarization":{"keep_tokens":42,"max_tokens":100,"llm":{"endpoint":"https://sum.example.com","auth":{"api_key":"sum-key"},"model":"gpt-4.1-mini"}}}`
 
 	cfg, err := parseAgentSummarization(payload)
 	if err != nil {
@@ -30,8 +30,44 @@ func TestParseAgentSummarizationValid(t *testing.T) {
 	if cfg.LLM.Model != "gpt-4.1-mini" {
 		t.Fatalf("unexpected LLM model: %s", cfg.LLM.Model)
 	}
+	if cfg.LLM.Auth.APIKey != "sum-key" || cfg.LLM.Auth.APIKeyEnv != "" {
+		t.Fatalf("unexpected LLM auth: %#v", cfg.LLM.Auth)
+	}
+}
+
+func TestParseAgentSummarizationValidAPIKeyEnv(t *testing.T) {
+	payload := `{"summarization":{"keep_tokens":5,"max_tokens":9,"llm":{"endpoint":"https://sum.example.com","auth":{"api_key_env":"SUM_KEY"},"model":"gpt-4.1-mini"}}}`
+
+	cfg, err := parseAgentSummarization(payload)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected summarization config")
+	}
+	if cfg.KeepTokens == nil || *cfg.KeepTokens != 5 {
+		t.Fatalf("unexpected keep tokens: %#v", cfg.KeepTokens)
+	}
+	if cfg.MaxTokens == nil || *cfg.MaxTokens != 9 {
+		t.Fatalf("unexpected max tokens: %#v", cfg.MaxTokens)
+	}
+	if cfg.LLM == nil {
+		t.Fatal("expected summarization LLM")
+	}
 	if cfg.LLM.Auth.APIKeyEnv != "SUM_KEY" || cfg.LLM.Auth.APIKey != "" {
 		t.Fatalf("unexpected LLM auth: %#v", cfg.LLM.Auth)
+	}
+}
+
+func TestParseAgentSummarizationNoBlock(t *testing.T) {
+	payload := `{"system_prompt":"hello"}`
+
+	cfg, err := parseAgentSummarization(payload)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg != nil {
+		t.Fatalf("expected nil config, got %#v", cfg)
 	}
 }
 

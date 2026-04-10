@@ -6,19 +6,19 @@ import (
 	"strings"
 )
 
-type SummarizationConfig struct {
+type summarizationConfig struct {
 	KeepTokens *int
 	MaxTokens  *int
-	LLM        *SummarizationLLMConfig
+	LLM        *summarizationLLMConfig
 }
 
-type SummarizationLLMConfig struct {
+type summarizationLLMConfig struct {
 	Endpoint string
-	Auth     SummarizationAuthConfig
+	Auth     summarizationAuthConfig
 	Model    string
 }
 
-type SummarizationAuthConfig struct {
+type summarizationAuthConfig struct {
 	APIKey    string
 	APIKeyEnv string
 }
@@ -28,11 +28,9 @@ type agentConfigurationPayload struct {
 }
 
 type summarizationPayload struct {
-	KeepTokens    *int                     `json:"keep_tokens"`
-	KeepTokensAlt *int                     `json:"keepTokens"`
-	MaxTokens     *int                     `json:"max_tokens"`
-	MaxTokensAlt  *int                     `json:"maxTokens"`
-	LLM           *summarizationLLMPayload `json:"llm"`
+	KeepTokens *int                     `json:"keep_tokens"`
+	MaxTokens  *int                     `json:"max_tokens"`
+	LLM        *summarizationLLMPayload `json:"llm"`
 }
 
 type summarizationLLMPayload struct {
@@ -42,13 +40,11 @@ type summarizationLLMPayload struct {
 }
 
 type summarizationAuthPayload struct {
-	APIKey       string `json:"api_key"`
-	APIKeyAlt    string `json:"apiKey"`
-	APIKeyEnv    string `json:"api_key_env"`
-	APIKeyEnvAlt string `json:"apiKeyEnv"`
+	APIKey    string `json:"api_key"`
+	APIKeyEnv string `json:"api_key_env"`
 }
 
-func parseAgentSummarization(raw string) (*SummarizationConfig, error) {
+func parseAgentSummarization(raw string) (*summarizationConfig, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, nil
@@ -62,34 +58,14 @@ func parseAgentSummarization(raw string) (*SummarizationConfig, error) {
 	return normalizeSummarizationPayload(payload.Summarization)
 }
 
-func normalizeSummarizationPayload(payload *summarizationPayload) (*SummarizationConfig, error) {
+func normalizeSummarizationPayload(payload *summarizationPayload) (*summarizationConfig, error) {
 	if payload == nil {
 		return nil, nil
 	}
 
-	keepTokens, err := pickOptionalInt(
-		payload.KeepTokens,
-		payload.KeepTokensAlt,
-		"summarization.keep_tokens",
-		"summarization.keepTokens",
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	maxTokens, err := pickOptionalInt(
-		payload.MaxTokens,
-		payload.MaxTokensAlt,
-		"summarization.max_tokens",
-		"summarization.maxTokens",
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	cfg := SummarizationConfig{
-		KeepTokens: keepTokens,
-		MaxTokens:  maxTokens,
+	cfg := summarizationConfig{
+		KeepTokens: payload.KeepTokens,
+		MaxTokens:  payload.MaxTokens,
 	}
 
 	if payload.LLM != nil {
@@ -107,7 +83,7 @@ func normalizeSummarizationPayload(payload *summarizationPayload) (*Summarizatio
 	return &cfg, nil
 }
 
-func normalizeSummarizationLLM(payload *summarizationLLMPayload) (*SummarizationLLMConfig, error) {
+func normalizeSummarizationLLM(payload *summarizationLLMPayload) (*summarizationLLMConfig, error) {
 	endpoint := strings.TrimSpace(payload.Endpoint)
 	if endpoint == "" {
 		return nil, fmt.Errorf("summarization.llm.endpoint is required")
@@ -123,62 +99,22 @@ func normalizeSummarizationLLM(payload *summarizationLLMPayload) (*Summarization
 		return nil, err
 	}
 
-	return &SummarizationLLMConfig{
+	return &summarizationLLMConfig{
 		Endpoint: endpoint,
 		Auth:     auth,
 		Model:    model,
 	}, nil
 }
 
-func normalizeSummarizationAuth(payload summarizationAuthPayload) (SummarizationAuthConfig, error) {
-	apiKey, err := pickOptionalString(
-		payload.APIKey,
-		payload.APIKeyAlt,
-		"summarization.llm.auth.api_key",
-		"summarization.llm.auth.apiKey",
-	)
-	if err != nil {
-		return SummarizationAuthConfig{}, err
-	}
-
-	apiKeyEnv, err := pickOptionalString(
-		payload.APIKeyEnv,
-		payload.APIKeyEnvAlt,
-		"summarization.llm.auth.api_key_env",
-		"summarization.llm.auth.apiKeyEnv",
-	)
-	if err != nil {
-		return SummarizationAuthConfig{}, err
-	}
-
+func normalizeSummarizationAuth(payload summarizationAuthPayload) (summarizationAuthConfig, error) {
+	apiKey := strings.TrimSpace(payload.APIKey)
+	apiKeyEnv := strings.TrimSpace(payload.APIKeyEnv)
 	if apiKey == "" && apiKeyEnv == "" {
-		return SummarizationAuthConfig{}, fmt.Errorf("summarization.llm.auth requires api_key or api_key_env")
+		return summarizationAuthConfig{}, fmt.Errorf("summarization.llm.auth requires api_key or api_key_env")
 	}
 	if apiKey != "" && apiKeyEnv != "" {
-		return SummarizationAuthConfig{}, fmt.Errorf("summarization.llm.auth supports only one of api_key or api_key_env")
+		return summarizationAuthConfig{}, fmt.Errorf("summarization.llm.auth supports only one of api_key or api_key_env")
 	}
 
-	return SummarizationAuthConfig{APIKey: apiKey, APIKeyEnv: apiKeyEnv}, nil
-}
-
-func pickOptionalInt(primary, fallback *int, field, altField string) (*int, error) {
-	if primary != nil && fallback != nil && *primary != *fallback {
-		return nil, fmt.Errorf("%s conflicts with %s", field, altField)
-	}
-	if primary != nil {
-		return primary, nil
-	}
-	return fallback, nil
-}
-
-func pickOptionalString(primary, fallback, field, altField string) (string, error) {
-	primary = strings.TrimSpace(primary)
-	fallback = strings.TrimSpace(fallback)
-	if primary != "" && fallback != "" && primary != fallback {
-		return "", fmt.Errorf("%s conflicts with %s", field, altField)
-	}
-	if primary != "" {
-		return primary, nil
-	}
-	return fallback, nil
+	return summarizationAuthConfig{APIKey: apiKey, APIKeyEnv: apiKeyEnv}, nil
 }

@@ -42,6 +42,27 @@ func TestWriteAgnConfig(t *testing.T) {
 	}
 }
 
+func TestAgnConfigNoSummarizationInJSON(t *testing.T) {
+	baseURL := "https://example.com"
+	apiKey := "test-api-key"
+	model := "test-model-id"
+	configJSON := `{"system_prompt":"hello"}`
+
+	summarization, err := parseAgentSummarization(configJSON)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if summarization != nil {
+		t.Fatalf("expected nil summarization, got %#v", summarization)
+	}
+
+	content := agnConfig(baseURL, apiKey, model, summarization, nil)
+	expected := fmt.Sprintf(agnConfigTemplate, baseURL, apiKey, model)
+	if content != expected {
+		t.Fatalf("expected config %q, got %q", expected, content)
+	}
+}
+
 func TestWriteAgnConfigWithMCPServers(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
@@ -82,7 +103,7 @@ func TestWriteAgnConfigWithMCPServers(t *testing.T) {
 	}
 }
 
-func TestWriteAgnConfigWithSummarization(t *testing.T) {
+func TestWriteAgnConfigWithSummarizationThresholds(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 
@@ -91,13 +112,45 @@ func TestWriteAgnConfigWithSummarization(t *testing.T) {
 	model := "test-model-id"
 	keepTokens := 10
 	maxTokens := 200
-	summarization := &SummarizationConfig{
+	summarization := &summarizationConfig{
 		KeepTokens: &keepTokens,
 		MaxTokens:  &maxTokens,
-		LLM: &SummarizationLLMConfig{
+	}
+	_, configPath, err := writeAgnConfig(baseURL, apiKey, model, summarization, nil)
+	if err != nil {
+		t.Fatalf("expected config to be written, got %v", err)
+	}
+
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("expected config to be readable, got %v", err)
+	}
+
+	expected := fmt.Sprintf(agnConfigTemplate, baseURL, apiKey, model) +
+		"summarization:\n" +
+		"  keep_tokens: 10\n" +
+		"  max_tokens: 200\n"
+	if string(content) != expected {
+		t.Fatalf("expected config %q, got %q", expected, string(content))
+	}
+}
+
+func TestWriteAgnConfigWithSummarizationLLMAPIKey(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	baseURL := "https://example.com"
+	apiKey := "test-api-key"
+	model := "test-model-id"
+	keepTokens := 10
+	maxTokens := 200
+	summarization := &summarizationConfig{
+		KeepTokens: &keepTokens,
+		MaxTokens:  &maxTokens,
+		LLM: &summarizationLLMConfig{
 			Endpoint: "https://summarization.example.com",
-			Auth: SummarizationAuthConfig{
-				APIKeyEnv: "SUMMARIZE_KEY",
+			Auth: summarizationAuthConfig{
+				APIKey: "sum-key",
 			},
 			Model: "gpt-4.1-mini",
 		},
@@ -115,6 +168,50 @@ func TestWriteAgnConfigWithSummarization(t *testing.T) {
 	expectedPath := filepath.Join(expectedDir, "config.yaml")
 	if configPath != expectedPath {
 		t.Fatalf("expected config path %q, got %q", expectedPath, configPath)
+	}
+
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("expected config to be readable, got %v", err)
+	}
+
+	expected := fmt.Sprintf(agnConfigTemplate, baseURL, apiKey, model) +
+		"summarization:\n" +
+		"  keep_tokens: 10\n" +
+		"  max_tokens: 200\n" +
+		"  llm:\n" +
+		"    endpoint: https://summarization.example.com\n" +
+		"    auth:\n" +
+		"      api_key: sum-key\n" +
+		"    model: gpt-4.1-mini\n"
+	if string(content) != expected {
+		t.Fatalf("expected config %q, got %q", expected, string(content))
+	}
+}
+
+func TestWriteAgnConfigWithSummarizationLLMAPIKeyEnv(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	baseURL := "https://example.com"
+	apiKey := "test-api-key"
+	model := "test-model-id"
+	keepTokens := 10
+	maxTokens := 200
+	summarization := &summarizationConfig{
+		KeepTokens: &keepTokens,
+		MaxTokens:  &maxTokens,
+		LLM: &summarizationLLMConfig{
+			Endpoint: "https://summarization.example.com",
+			Auth: summarizationAuthConfig{
+				APIKeyEnv: "SUMMARIZE_KEY",
+			},
+			Model: "gpt-4.1-mini",
+		},
+	}
+	_, configPath, err := writeAgnConfig(baseURL, apiKey, model, summarization, nil)
+	if err != nil {
+		t.Fatalf("expected config to be written, got %v", err)
 	}
 
 	content, err := os.ReadFile(configPath)

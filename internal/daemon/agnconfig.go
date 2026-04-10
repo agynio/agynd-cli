@@ -16,7 +16,7 @@ const agnConfigTemplate = `llm:
   model: %s
 `
 
-func writeAgnConfig(llmBaseURL, apiKey, model string, summarization *SummarizationConfig, mcpServers []config.MCPServer) (string, string, error) {
+func writeAgnConfig(llmBaseURL, apiKey, model string, summarization *summarizationConfig, mcpServers []config.MCPServer) (string, string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", "", fmt.Errorf("resolve home directory: %w", err)
@@ -33,7 +33,7 @@ func writeAgnConfig(llmBaseURL, apiKey, model string, summarization *Summarizati
 	return agnDir, configPath, nil
 }
 
-func agnConfig(llmBaseURL, apiKey, model string, summarization *SummarizationConfig, mcpServers []config.MCPServer) string {
+func agnConfig(llmBaseURL, apiKey, model string, summarization *summarizationConfig, mcpServers []config.MCPServer) string {
 	payload := fmt.Sprintf(agnConfigTemplate, llmBaseURL, apiKey, model)
 	if summarization == nil && len(mcpServers) == 0 {
 		return payload
@@ -53,7 +53,7 @@ func agnConfig(llmBaseURL, apiKey, model string, summarization *SummarizationCon
 	return builder.String()
 }
 
-func appendSummarizationConfig(builder *strings.Builder, summarization *SummarizationConfig) {
+func appendSummarizationConfig(builder *strings.Builder, summarization *summarizationConfig) {
 	builder.WriteString("summarization:\n")
 	if summarization.KeepTokens != nil {
 		fmt.Fprintf(builder, "  keep_tokens: %d\n", *summarization.KeepTokens)
