@@ -14,6 +14,7 @@ func NewThreadMapping() *ThreadMapping {
 		codexToPlatform: make(map[string]string),
 	}
 }
+
 func (m *ThreadMapping) SetRecord(record ThreadMappingRecord) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
