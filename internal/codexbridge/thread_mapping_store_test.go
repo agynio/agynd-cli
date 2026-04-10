@@ -1,16 +1,33 @@
 package codexbridge
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 )
 
+func writeMappingFile(t *testing.T, path string, record ThreadMappingRecord) {
+	t.Helper()
+	payload, err := json.Marshal(record)
+	if err != nil {
+		t.Fatalf("marshal mapping: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), threadMappingDirMode); err != nil {
+		t.Fatalf("mkdir mapping dir: %v", err)
+	}
+	if err := os.WriteFile(path, payload, threadMappingFileMode); err != nil {
+		t.Fatalf("write mapping: %v", err)
+	}
+}
+
 func TestThreadMappingStoreSaveLoad(t *testing.T) {
-	baseDir := t.TempDir()
-	store := NewThreadMappingStore(baseDir)
+	homeDir := t.TempDir()
+	store := NewThreadMappingStore(homeDir)
 	record := ThreadMappingRecord{
 		PlatformThreadID: "platform-1",
 		CodexThreadID:    "codex-1",
@@ -62,8 +79,8 @@ func TestThreadMappingStoreLoadMissing(t *testing.T) {
 }
 
 func TestThreadMappingStoreSaveAtomic(t *testing.T) {
-	baseDir := t.TempDir()
-	store := NewThreadMappingStore(baseDir)
+	homeDir := t.TempDir()
+	store := NewThreadMappingStore(homeDir)
 	original := ThreadMappingRecord{
 		PlatformThreadID: "platform-atomic",
 		CodexThreadID:    "codex-old",
@@ -105,5 +122,85 @@ func TestThreadMappingStoreSaveAtomic(t *testing.T) {
 	}
 	if len(entries) != 1 {
 		t.Fatalf("expected no temp files, found %d entries", len(entries))
+	}
+}
+
+func TestThreadMappingStoreLoadLegacyMigrates(t *testing.T) {
+	homeDir := t.TempDir()
+	store := NewThreadMappingStore(homeDir)
+	legacyRecord := ThreadMappingRecord{
+		PlatformThreadID: "platform-legacy",
+		CodexThreadID:    "codex-legacy",
+		CreatedAtUnixMs:  1700000000000,
+		LastUsedAtUnixMs: 1700000000100,
+	}
+	legacyPath, err := store.legacyMappingPath(legacyRecord.PlatformThreadID)
+	if err != nil {
+		t.Fatalf("expected legacy path, got %v", err)
+	}
+	writeMappingFile(t, legacyPath, legacyRecord)
+	got, ok, err := store.Load(legacyRecord.PlatformThreadID)
+	if err != nil {
+		t.Fatalf("expected load to succeed, got %v", err)
+	}
+	if !ok {
+		t.Fatal("expected legacy mapping to load")
+	}
+	if !reflect.DeepEqual(got, legacyRecord) {
+		t.Fatalf("unexpected record: %#v", got)
+	}
+	newPath, err := store.mappingPath(legacyRecord.PlatformThreadID)
+	if err != nil {
+		t.Fatalf("expected new path, got %v", err)
+	}
+	if _, err := os.Stat(newPath); err != nil {
+		t.Fatalf("expected migrated mapping to exist, got %v", err)
+	}
+	if _, err := os.Stat(legacyPath); err != nil {
+		t.Fatalf("expected legacy mapping to remain, got %v", err)
+	}
+}
+
+func TestThreadMappingStoreLoadPrefersNew(t *testing.T) {
+	homeDir := t.TempDir()
+	store := NewThreadMappingStore(homeDir)
+	newRecord := ThreadMappingRecord{
+		PlatformThreadID: "platform-dual",
+		CodexThreadID:    "codex-new",
+		CreatedAtUnixMs:  1700000000000,
+		LastUsedAtUnixMs: 1700000000100,
+	}
+	legacyRecord := ThreadMappingRecord{
+		PlatformThreadID: "platform-dual",
+		CodexThreadID:    "codex-legacy",
+		CreatedAtUnixMs:  1700000000000,
+		LastUsedAtUnixMs: 1700000000200,
+	}
+	newPath, err := store.mappingPath(newRecord.PlatformThreadID)
+	if err != nil {
+		t.Fatalf("expected new path, got %v", err)
+	}
+	legacyPath, err := store.legacyMappingPath(newRecord.PlatformThreadID)
+	if err != nil {
+		t.Fatalf("expected legacy path, got %v", err)
+	}
+	writeMappingFile(t, newPath, newRecord)
+	writeMappingFile(t, legacyPath, legacyRecord)
+	var buffer bytes.Buffer
+	originalOutput := log.Writer()
+	log.SetOutput(&buffer)
+	t.Cleanup(func() { log.SetOutput(originalOutput) })
+	got, ok, err := store.Load(newRecord.PlatformThreadID)
+	if err != nil {
+		t.Fatalf("expected load to succeed, got %v", err)
+	}
+	if !ok {
+		t.Fatal("expected mapping to load")
+	}
+	if !reflect.DeepEqual(got, newRecord) {
+		t.Fatalf("expected new record to win, got %#v", got)
+	}
+	if !bytes.Contains(buffer.Bytes(), []byte("legacy codex thread")) {
+		t.Fatalf("expected warning about legacy mismatch, got %q", buffer.String())
 	}
 }
