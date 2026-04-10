@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,13 +49,15 @@ func (r ThreadMappingRecord) validate() error {
 
 type ThreadMappingStore struct {
 	dir        string
+	legacyDir  string
 	createTemp func(dir, pattern string) (*os.File, error)
 	rename     func(oldpath, newpath string) error
 }
 
-func NewThreadMappingStore(codexHome string) *ThreadMappingStore {
+func NewThreadMappingStore(homeDir string) *ThreadMappingStore {
 	return &ThreadMappingStore{
-		dir:        filepath.Join(codexHome, "agynd", "thread-mapping"),
+		dir:        filepath.Join(homeDir, ".agyn", "codex", "thread-mapping"),
+		legacyDir:  filepath.Join(homeDir, ".codex", "agynd", "thread-mapping"),
 		createTemp: os.CreateTemp,
 		rename:     os.Rename,
 	}
@@ -65,24 +68,41 @@ func (s *ThreadMappingStore) Load(platformThreadID string) (ThreadMappingRecord,
 	if err != nil {
 		return ThreadMappingRecord{}, false, err
 	}
-	data, err := os.ReadFile(path)
+	legacyPath, err := s.legacyMappingPath(platformThreadID)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return ThreadMappingRecord{}, false, nil
+		return ThreadMappingRecord{}, false, err
+	}
+	newRecord, ok, err := s.readRecord(path, platformThreadID)
+	if err != nil {
+		return ThreadMappingRecord{}, false, err
+	}
+	if ok {
+		legacyRecord, legacyOk, err := s.readRecord(legacyPath, platformThreadID)
+		if err != nil {
+			log.Printf("codex mapping: legacy read failed for %s: %v", platformThreadID, err)
+			return newRecord, true, nil
 		}
-		return ThreadMappingRecord{}, false, fmt.Errorf("read mapping: %w", err)
+		if legacyOk && legacyRecord.CodexThreadID != newRecord.CodexThreadID {
+			log.Printf(
+				"codex mapping: legacy codex thread %s differs from current %s for platform %s",
+				legacyRecord.CodexThreadID,
+				newRecord.CodexThreadID,
+				platformThreadID,
+			)
+		}
+		return newRecord, true, nil
 	}
-	var record ThreadMappingRecord
-	if err := json.Unmarshal(data, &record); err != nil {
-		return ThreadMappingRecord{}, false, fmt.Errorf("parse mapping: %w", err)
+	legacyRecord, legacyOk, err := s.readRecord(legacyPath, platformThreadID)
+	if err != nil {
+		return ThreadMappingRecord{}, false, err
 	}
-	if err := record.validate(); err != nil {
-		return ThreadMappingRecord{}, false, fmt.Errorf("invalid mapping: %w", err)
+	if !legacyOk {
+		return ThreadMappingRecord{}, false, nil
 	}
-	if record.PlatformThreadID != platformThreadID {
-		return ThreadMappingRecord{}, false, fmt.Errorf("mapping platform_thread_id mismatch")
+	if err := s.Save(legacyRecord); err != nil {
+		return ThreadMappingRecord{}, false, err
 	}
-	return record, true, nil
+	return legacyRecord, true, nil
 }
 
 func (s *ThreadMappingStore) Save(record ThreadMappingRecord) error {
@@ -131,6 +151,42 @@ func (s *ThreadMappingStore) Save(record ThreadMappingRecord) error {
 }
 
 func (s *ThreadMappingStore) mappingPath(platformThreadID string) (string, error) {
+	return mappingPath(s.dir, platformThreadID)
+}
+
+func (s *ThreadMappingStore) legacyMappingPath(platformThreadID string) (string, error) {
+	return mappingPath(s.legacyDir, platformThreadID)
+}
+
+func (s *ThreadMappingStore) readRecord(path, platformThreadID string) (ThreadMappingRecord, bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ThreadMappingRecord{}, false, nil
+		}
+		return ThreadMappingRecord{}, false, fmt.Errorf("read mapping: %w", err)
+	}
+	var record ThreadMappingRecord
+	if err := json.Unmarshal(data, &record); err != nil {
+		return ThreadMappingRecord{}, false, fmt.Errorf("parse mapping: %w", err)
+	}
+	if err := record.validate(); err != nil {
+		return ThreadMappingRecord{}, false, fmt.Errorf("invalid mapping: %w", err)
+	}
+	if record.PlatformThreadID != platformThreadID {
+		return ThreadMappingRecord{}, false, fmt.Errorf("mapping platform_thread_id mismatch")
+	}
+	return record, true, nil
+}
+
+func mappingPath(dir, platformThreadID string) (string, error) {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return "", fmt.Errorf("mapping directory is required")
+	}
+	if !filepath.IsAbs(dir) {
+		return "", fmt.Errorf("mapping directory %q must be absolute", dir)
+	}
 	platformThreadID = strings.TrimSpace(platformThreadID)
 	if platformThreadID == "" {
 		return "", fmt.Errorf("platform thread id is required")
@@ -138,5 +194,5 @@ func (s *ThreadMappingStore) mappingPath(platformThreadID string) (string, error
 	if strings.ContainsRune(platformThreadID, filepath.Separator) || filepath.Base(platformThreadID) != platformThreadID {
 		return "", fmt.Errorf("platform thread id %q is invalid", platformThreadID)
 	}
-	return filepath.Join(s.dir, platformThreadID+".json"), nil
+	return filepath.Join(dir, platformThreadID+".json"), nil
 }

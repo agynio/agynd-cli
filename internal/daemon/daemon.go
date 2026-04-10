@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -186,7 +187,12 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}
-	mappingStore := codexbridge.NewThreadMappingStore(codexHome)
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		_ = setup.gatewayConn.Close()
+		return nil, fmt.Errorf("resolve home directory: %w", err)
+	}
+	mappingStore := codexbridge.NewThreadMappingStore(homeDir)
 
 	tracingProxy, err := tracingproxy.Start(ctx, tracingproxy.Config{
 		TracingAddress: cfg.TracingAddress,
