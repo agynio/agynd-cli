@@ -44,8 +44,9 @@ type Daemon struct {
 	agents       gatewayv1.AgentsGatewayClient
 	subscriber   *subscriber.Subscriber
 	consumer     *platform.Consumer
-	codex        *codex.Client
+	codex        codexClient
 	mapping      *codexbridge.ThreadMapping
+	mappingStore *codexbridge.ThreadMappingStore
 	tracker      *codexbridge.TurnTracker
 	agn          *agnsdk.Client
 	agent        *agentsv1.Agent
@@ -55,6 +56,13 @@ type Daemon struct {
 }
 
 type platformConn interface {
+	Close() error
+}
+
+type codexClient interface {
+	StartThread(ctx context.Context, params *codex.ThreadStartParams) (*codex.ThreadStartResponse, error)
+	ResumeThread(ctx context.Context, params *codex.ThreadResumeParams) (*codex.ThreadResumeResponse, error)
+	StartTurn(ctx context.Context, params *codex.TurnStartParams) (*codex.TurnStartResponse, error)
 	Close() error
 }
 
@@ -178,6 +186,7 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}
+	mappingStore := codexbridge.NewThreadMappingStore(codexHome)
 
 	tracingProxy, err := tracingproxy.Start(ctx, tracingproxy.Config{
 		TracingAddress: cfg.TracingAddress,
@@ -217,6 +226,7 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 		consumer:     platform.NewConsumer(setup.threads, pageSize, pageTimeout),
 		codex:        codexClient,
 		mapping:      threadsMapping,
+		mappingStore: mappingStore,
 		tracker:      tracker,
 		agent:        setup.agent,
 		tracingProxy: tracingProxy,
@@ -290,16 +300,9 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 	if err != nil {
 		return err
 	}
-	codexThreadID, ok := d.mapping.CodexForPlatform(threadID)
-	if !ok {
-		if err := waitForMCPServers(ctx, d.cfg.MCPServers, mcpReadyTimeout); err != nil {
-			return err
-		}
-		codexThreadID, err = d.startCodexThread(ctx)
-		if err != nil {
-			return err
-		}
-		d.mapping.Set(threadID, codexThreadID)
+	codexThreadID, err := d.ensureCodexThread(ctx, threadID)
+	if err != nil {
+		return err
 	}
 	turnCtx, cancel := context.WithTimeout(ctx, turnStartTimeout)
 	turnResp, err := d.codex.StartTurn(turnCtx, &codex.TurnStartParams{
@@ -347,6 +350,58 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 	}
 }
 
+func (d *Daemon) ensureCodexThread(ctx context.Context, platformThreadID string) (string, error) {
+	if record, ok := d.mapping.RecordForPlatform(platformThreadID); ok {
+		updated := record
+		updated.LastUsedAtUnixMs = time.Now().UnixMilli()
+		d.mapping.SetRecord(updated)
+		if d.mappingStore != nil {
+			if err := d.mappingStore.Save(updated); err != nil {
+				return "", err
+			}
+		}
+		return record.CodexThreadID, nil
+	}
+	if err := waitForMCPServers(ctx, d.cfg.MCPServers, mcpReadyTimeout); err != nil {
+		return "", err
+	}
+	if d.mappingStore != nil {
+		record, ok, err := d.mappingStore.Load(platformThreadID)
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			if err := d.resumeCodexThread(ctx, record.CodexThreadID); err != nil {
+				return "", err
+			}
+			record.LastUsedAtUnixMs = time.Now().UnixMilli()
+			d.mapping.SetRecord(record)
+			if err := d.mappingStore.Save(record); err != nil {
+				return "", err
+			}
+			return record.CodexThreadID, nil
+		}
+	}
+	codexThreadID, err := d.startCodexThread(ctx)
+	if err != nil {
+		return "", err
+	}
+	now := time.Now().UnixMilli()
+	record := codexbridge.ThreadMappingRecord{
+		PlatformThreadID: platformThreadID,
+		CodexThreadID:    codexThreadID,
+		CreatedAtUnixMs:  now,
+		LastUsedAtUnixMs: now,
+	}
+	d.mapping.SetRecord(record)
+	if d.mappingStore != nil {
+		if err := d.mappingStore.Save(record); err != nil {
+			return "", err
+		}
+	}
+	return codexThreadID, nil
+}
+
 func waitForMCPServers(ctx context.Context, servers []config.MCPServer, timeout time.Duration) error {
 	if len(servers) == 0 {
 		return nil
@@ -376,21 +431,61 @@ func waitForMCPServers(ctx context.Context, servers []config.MCPServer, timeout 
 	return nil
 }
 
-func (d *Daemon) startCodexThread(ctx context.Context) (string, error) {
-	params := &codex.ThreadStartParams{}
-	model := strings.TrimSpace(d.agent.GetModel())
-	if model != "" {
-		params.Model = &model
+type codexThreadDefaults struct {
+	model                 *string
+	baseInstructions      *string
+	developerInstructions *string
+	cwd                   *string
+}
+
+func (d *Daemon) codexThreadDefaults() codexThreadDefaults {
+	defaults := codexThreadDefaults{}
+	if model := strings.TrimSpace(d.agent.GetModel()); model != "" {
+		defaults.model = &model
 	}
 	if role := strings.TrimSpace(d.agent.GetRole()); role != "" {
-		params.BaseInstructions = &role
+		defaults.baseInstructions = &role
 	}
 	if config := strings.TrimSpace(d.agent.GetConfiguration()); config != "" {
-		params.DeveloperInstructions = &config
+		defaults.developerInstructions = &config
 	}
 	if d.cfg.WorkDir != "" {
-		params.Cwd = &d.cfg.WorkDir
+		workDir := d.cfg.WorkDir
+		defaults.cwd = &workDir
 	}
+	return defaults
+}
+
+func (d *Daemon) resumeCodexThread(ctx context.Context, codexThreadID string) error {
+	params := &codex.ThreadResumeParams{ThreadID: codexThreadID}
+	defaults := d.codexThreadDefaults()
+	params.Model = defaults.model
+	params.BaseInstructions = defaults.baseInstructions
+	params.DeveloperInstructions = defaults.developerInstructions
+	params.Cwd = defaults.cwd
+	resp, err := d.codex.ResumeThread(ctx, params)
+	if err != nil {
+		return fmt.Errorf("resume codex thread: %w", err)
+	}
+	threadID := strings.TrimSpace(resp.Thread.ID)
+	if threadID == "" {
+		return fmt.Errorf("resume codex thread id missing")
+	}
+	if threadID != codexThreadID {
+		return fmt.Errorf("resume codex thread id mismatch")
+	}
+	return nil
+}
+
+func (d *Daemon) startCodexThread(ctx context.Context) (string, error) {
+	params := &codex.ThreadStartParams{}
+	defaults := d.codexThreadDefaults()
+	params.Model = defaults.model
+	params.BaseInstructions = defaults.baseInstructions
+	params.DeveloperInstructions = defaults.developerInstructions
+	params.Cwd = defaults.cwd
+	ephemeral := false
+	params.Ephemeral = &ephemeral
 	resp, err := d.codex.StartThread(ctx, params)
 	if err != nil {
 		return "", fmt.Errorf("start codex thread: %w", err)
