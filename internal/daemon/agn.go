@@ -21,7 +21,19 @@ func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daem
 		return nil, err
 	}
 
-	_, configPath, err := writeAgnConfig(cfg.LLMBaseURL, cfg.LLMAPIToken, setup.agent.GetModel(), cfg.MCPServers)
+	summarization, err := parseAgentSummarization(setup.agent.GetConfiguration())
+	if err != nil {
+		_ = setup.gatewayConn.Close()
+		return nil, err
+	}
+
+	_, configPath, err := writeAgnConfig(
+		cfg.LLMBaseURL,
+		cfg.LLMAPIToken,
+		setup.agent.GetModel(),
+		summarization,
+		cfg.MCPServers,
+	)
 	if err != nil {
 		_ = setup.gatewayConn.Close()
 		return nil, err
