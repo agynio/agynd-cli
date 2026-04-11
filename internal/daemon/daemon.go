@@ -18,6 +18,7 @@ import (
 	"github.com/agynio/agynd-cli/internal/platform"
 	"github.com/agynio/agynd-cli/internal/subscriber"
 	"github.com/agynio/agynd-cli/internal/tracingproxy"
+	claude "github.com/agynio/claude-sdk-go"
 	codex "github.com/agynio/codex-sdk-go"
 )
 
@@ -50,6 +51,7 @@ type Daemon struct {
 	mappingStore *codexbridge.ThreadMappingStore
 	tracker      *codexbridge.TurnTracker
 	agn          *agnsdk.Client
+	claude       claudeClient
 	agent        *agentsv1.Agent
 	tracingProxy *tracingproxy.Proxy
 
@@ -64,6 +66,11 @@ type codexClient interface {
 	StartThread(ctx context.Context, params *codex.ThreadStartParams) (*codex.ThreadStartResponse, error)
 	ResumeThread(ctx context.Context, params *codex.ThreadResumeParams) (*codex.ThreadResumeResponse, error)
 	StartTurn(ctx context.Context, params *codex.TurnStartParams) (*codex.TurnStartResponse, error)
+	Close() error
+}
+
+type claudeClient interface {
+	Turn(ctx context.Context, params claude.TurnParams, handler claude.EventHandler) (*claude.TurnResult, error)
 	Close() error
 }
 
@@ -82,7 +89,7 @@ func New(ctx context.Context, cfg config.Config, version string) (*Daemon, error
 	case SDKAgn:
 		return newAgnDaemon(ctx, cfg, version)
 	case SDKClaude:
-		return nil, fmt.Errorf("sdk %q is not yet supported", cfg.SDK)
+		return newClaudeDaemon(ctx, cfg, version)
 	default:
 		return nil, fmt.Errorf("unknown sdk %q", cfg.SDK)
 	}
@@ -246,6 +253,9 @@ func (d *Daemon) Close() {
 	if d.agn != nil {
 		_ = d.agn.Close()
 	}
+	if d.claude != nil {
+		_ = d.claude.Close()
+	}
 	if d.tracingProxy != nil {
 		d.tracingProxy.Close()
 	}
@@ -292,6 +302,8 @@ func (d *Daemon) handleMessage(ctx context.Context, message platform.Message) er
 		return d.handleCodexMessage(ctx, message)
 	case SDKAgn:
 		return d.handleAgnMessage(ctx, message)
+	case SDKClaude:
+		return d.handleClaudeMessage(ctx, message)
 	default:
 		return fmt.Errorf("unknown sdk %q", d.sdk)
 	}

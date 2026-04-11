@@ -1,5 +1,7 @@
 github.com/agynio/agn-sdk-go v0.1.0 h1:wdLfQdNLVVHrbr+w59zvMOkwiq3RIRbx4j+V3Jhnel0=
 github.com/agynio/agn-sdk-go v0.1.0/go.mod h1:bFwhqvyDv3LWMBYRDEtjH5/RRMjENJ1CTpeS11Vt1rI=
+github.com/agynio/claude-sdk-go v0.0.0-20260411100316-6269deef672b h1:TygFNI4BwjDx2UHuhkChMT8trV1bcXpfrR/klHtFJjw=
+github.com/agynio/claude-sdk-go v0.0.0-20260411100316-6269deef672b/go.mod h1:TZHpLY+535K6GUvvZ3z+FSPq52zzjMpbnc1K2EAbemQ=
 github.com/agynio/codex-sdk-go v0.1.0 h1:EqsijEpD9/KnkoipdOf0n8cq2oC//4q2LY3edOVhicE=
 github.com/agynio/codex-sdk-go v0.1.0/go.mod h1:YhNX7IO1zVMcfpFINRD1reQFWTQzCZXQT1aCghtKNok=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
