@@ -52,8 +52,10 @@ func TestWriteClaudeSettings(t *testing.T) {
 			Deny: []string{},
 		},
 		Env: map[string]string{
-			"ANTHROPIC_BASE_URL": baseURL,
-			"ANTHROPIC_API_KEY":  apiKey,
+			"ANTHROPIC_BASE_URL":                       baseURL,
+			"ANTHROPIC_API_KEY":                        apiKey,
+			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+			"DISABLE_AUTOUPDATER":                      "1",
 		},
 	}
 	if !reflect.DeepEqual(got, expected) {
@@ -107,8 +109,10 @@ func TestWriteClaudeSettingsWithMCPServers(t *testing.T) {
 			Deny: []string{},
 		},
 		Env: map[string]string{
-			"ANTHROPIC_BASE_URL": baseURL,
-			"ANTHROPIC_API_KEY":  apiKey,
+			"ANTHROPIC_BASE_URL":                       baseURL,
+			"ANTHROPIC_API_KEY":                        apiKey,
+			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+			"DISABLE_AUTOUPDATER":                      "1",
 		},
 		MCPServers: map[string]claudeMCPServer{
 			"memory": {Type: "http", URL: "http://localhost:8100/mcp"},

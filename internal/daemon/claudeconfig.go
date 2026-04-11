@@ -57,8 +57,10 @@ func writeClaudeSettings(llmBaseURL, apiKey string, mcpServers []config.MCPServe
 			Deny: []string{},
 		},
 		Env: map[string]string{
-			"ANTHROPIC_BASE_URL": llmBaseURL,
-			"ANTHROPIC_API_KEY":  apiKey,
+			"ANTHROPIC_BASE_URL":                       llmBaseURL,
+			"ANTHROPIC_API_KEY":                        apiKey,
+			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+			"DISABLE_AUTOUPDATER":                      "1",
 		},
 	}
 	if len(mcpServers) > 0 {
