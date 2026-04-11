@@ -15,8 +15,11 @@ const testAgentID = "550e8400-e29b-41d4-a716-446655440000"
 
 func testConfig(sdk string) config.Config {
 	binary := SDKCodex
-	if sdk == SDKAgn {
+	switch sdk {
+	case SDKAgn:
 		binary = SDKAgn
+	case SDKClaude:
+		binary = SDKClaude
 	}
 	return config.Config{
 		AgentID:        uuid.MustParse(testAgentID),
@@ -82,20 +85,6 @@ func TestBuildInputEmpty(t *testing.T) {
 	}
 }
 
-func TestNewUnsupportedSDKs(t *testing.T) {
-	unsupported := []string{SDKClaude}
-	for _, sdk := range unsupported {
-		_, err := New(context.Background(), testConfig(sdk), "test")
-		if err == nil {
-			t.Fatalf("expected error for sdk %s", sdk)
-		}
-		expected := "sdk \"" + sdk + "\" is not yet supported"
-		if err.Error() != expected {
-			t.Fatalf("unexpected error for sdk %s: %v", sdk, err)
-		}
-	}
-}
-
 func TestNewUnknownSDK(t *testing.T) {
 	_, err := New(context.Background(), testConfig("unknown"), "test")
 	if err == nil {
@@ -126,6 +115,19 @@ func TestNewAgnDispatch(t *testing.T) {
 	_, err := New(ctx, testConfig(SDKAgn), "test")
 	if err == nil {
 		t.Fatal("expected error for agn dispatch")
+	}
+	if strings.Contains(err.Error(), "not yet supported") || strings.Contains(err.Error(), "unknown sdk") {
+		t.Fatalf("unexpected dispatch error: %v", err)
+	}
+}
+
+func TestNewClaudeDispatch(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	_, err := New(ctx, testConfig(SDKClaude), "test")
+	if err == nil {
+		t.Fatal("expected error for claude dispatch")
 	}
 	if strings.Contains(err.Error(), "not yet supported") || strings.Contains(err.Error(), "unknown sdk") {
 		t.Fatalf("unexpected dispatch error: %v", err)

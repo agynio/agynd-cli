@@ -6,6 +6,7 @@ toolchain go1.24.13
 
 require (
 	github.com/agynio/agn-sdk-go v0.1.0
+	github.com/agynio/claude-sdk-go v0.0.0-20260411102619-08a8fbe28a13
 	github.com/agynio/codex-sdk-go v0.1.0
 	github.com/google/uuid v1.6.0
 	go.opentelemetry.io/proto/otlp v1.10.0
