@@ -30,12 +30,17 @@ func TestCodexClientHelloResponse(t *testing.T) {
 	codexHome := t.TempDir()
 	writeCodexConfig(t, codexHome)
 
+	workDir, err := os.MkdirTemp("", "codex-workdir-")
+	if err != nil {
+		t.Fatalf("create workdir: %v", err)
+	}
+
 	handler := &turnCompletedHandler{completed: make(chan *codex.TurnCompletedNotification, 1)}
 	ctx := context.Background()
 	client, err := codex.NewClient(ctx,
 		codex.WithBinary("codex"),
 		codex.WithArgs("app-server"),
-		codex.WithWorkDir(t.TempDir()),
+		codex.WithWorkDir(workDir),
 		codex.WithEnv(map[string]string{
 			"CODEX_HOME":     codexHome,
 			"OPENAI_API_KEY": "test-key",
@@ -45,10 +50,14 @@ func TestCodexClientHelloResponse(t *testing.T) {
 		codex.WithClientInfo("e2e-test", "0.1.0"),
 	)
 	if err != nil {
+		_ = os.RemoveAll(workDir)
 		t.Fatalf("start codex client: %v", err)
 	}
 	t.Cleanup(func() {
 		_ = client.Close()
+		if err := removeAllWithRetry(workDir, 10, 200*time.Millisecond); err != nil {
+			t.Fatalf("cleanup workdir: %v", err)
+		}
 	})
 
 	model := "simple-hello"
@@ -111,6 +120,19 @@ supports_websockets = false
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatalf("write config.toml: %v", err)
 	}
+}
+
+func removeAllWithRetry(path string, attempts int, delay time.Duration) error {
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		if err := os.RemoveAll(path); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		time.Sleep(delay)
+	}
+	return lastErr
 }
 
 func findAgentMessage(items []codex.ThreadItem) (string, bool) {
