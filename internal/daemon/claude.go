@@ -47,6 +47,7 @@ func newClaudeDaemon(ctx context.Context, cfg config.Config, version string) (*D
 		Env: []string{
 			"LD_LIBRARY_PATH=/agyn-bin/lib",
 			"OTEL_EXPORTER_OTLP_ENDPOINT=" + otlpEndpoint,
+			"IS_SANDBOX=1",
 		},
 	}
 	if model := strings.TrimSpace(setup.agent.GetModel()); model != "" {
