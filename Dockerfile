@@ -22,8 +22,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
 COPY buf.gen.yaml buf.yaml ./
-RUN buf generate buf.build/agynio/api \
-    --path agynio/api/gateway/v1 \
+RUN buf generate https://github.com/agynio/api.git#commit=ec008b1e2dfacec3e4d85776729fe1c3d5f2c42d \
+    --path proto/agynio/api/gateway/v1 \
     --include-imports
 
 COPY . .

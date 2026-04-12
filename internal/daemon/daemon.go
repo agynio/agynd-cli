@@ -44,6 +44,7 @@ type Daemon struct {
 	gatewayConn   platformConn
 	threads       *platform.Threads
 	agents        gatewayv1.AgentsGatewayClient
+	runners       runnersClient
 	subscriber    *subscriber.Subscriber
 	consumer      *platform.Consumer
 	codex         codexClient
@@ -76,11 +77,17 @@ type claudeClient interface {
 	Close() error
 }
 
+type runnersClient interface {
+	ListWorkloadsByThread(ctx context.Context, threadID string, pageSize int32, pageToken string) ([]platform.Workload, string, error)
+	TouchWorkload(ctx context.Context, workloadID string) error
+}
+
 type platformSetup struct {
 	gatewayConn   platformConn
 	threads       *platform.Threads
 	notifications *platform.Notifications
 	agents        gatewayv1.AgentsGatewayClient
+	runners       *platform.Runners
 	agent         *agentsv1.Agent
 }
 
@@ -158,9 +165,11 @@ func tryConnectPlatform(ctx context.Context, cfg config.Config) (*platformSetup,
 	threadsGateway := gatewayv1.NewThreadsGatewayClient(gatewayConn)
 	notificationsGateway := gatewayv1.NewNotificationsGatewayClient(gatewayConn)
 	agentsClient := gatewayv1.NewAgentsGatewayClient(gatewayConn)
+	runnersGateway := gatewayv1.NewRunnersGatewayClient(gatewayConn)
 
 	threadsClient := platform.NewThreads(threadsGateway)
 	notificationsClient := platform.NewNotifications(notificationsGateway)
+	runnersClient := platform.NewRunners(runnersGateway)
 
 	agentResp, err := agentsClient.GetAgent(ctx, &agentsv1.GetAgentRequest{Id: cfg.AgentID.String()})
 	if err != nil {
@@ -178,6 +187,7 @@ func tryConnectPlatform(ctx context.Context, cfg config.Config) (*platformSetup,
 		threads:       threadsClient,
 		notifications: notificationsClient,
 		agents:        agentsClient,
+		runners:       runnersClient,
 		agent:         agent,
 	}, nil
 }
@@ -238,6 +248,7 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 		gatewayConn:  setup.gatewayConn,
 		threads:      setup.threads,
 		agents:       setup.agents,
+		runners:      setup.runners,
 		subscriber:   subscriber.New(setup.notifications, cfg.AgentID.String()),
 		consumer:     platform.NewConsumer(setup.threads, pageSize, pageTimeout),
 		codex:        codexClient,
@@ -277,6 +288,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 			log.Printf("subscriber stopped: %v", err)
 		}
 	}()
+
+	go d.runKeepalive(ctx)
 
 	for {
 		select {

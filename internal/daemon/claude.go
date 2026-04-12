@@ -69,6 +69,7 @@ func newClaudeDaemon(ctx context.Context, cfg config.Config, version string) (*D
 		gatewayConn:  setup.gatewayConn,
 		threads:      setup.threads,
 		agents:       setup.agents,
+		runners:      setup.runners,
 		subscriber:   subscriber.New(setup.notifications, cfg.AgentID.String()),
 		consumer:     platform.NewConsumer(setup.threads, pageSize, pageTimeout),
 		claude:       claudeClient,
