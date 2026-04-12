@@ -294,7 +294,7 @@ func (d *Daemon) syncMessages(ctx context.Context) error {
 	d.syncMu.Lock()
 	defer d.syncMu.Unlock()
 
-	return d.consumer.Sync(ctx, d.cfg.AgentID.String(), func(message platform.Message) error {
+	return d.consumer.Sync(ctx, d.cfg.AgentID.String(), d.cfg.ThreadID, func(message platform.Message) error {
 		return d.handleMessage(ctx, message)
 	})
 }

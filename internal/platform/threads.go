@@ -26,14 +26,19 @@ func NewThreads(client gatewayv1.ThreadsGatewayClient) *Threads {
 	return &Threads{client: client}
 }
 
-func (t *Threads) GetUnackedMessages(ctx context.Context, participantID string, pageSize int32, pageToken string) ([]Message, string, error) {
+func (t *Threads) GetUnackedMessages(ctx context.Context, participantID string, threadID string, pageSize int32, pageToken string) ([]Message, string, error) {
 	if participantID == "" {
 		return nil, "", fmt.Errorf("participant id is required")
+	}
+	var threadFilter *string
+	if threadID != "" {
+		threadFilter = &threadID
 	}
 	resp, err := t.client.GetUnackedMessages(ctx, &threadsv1.GetUnackedMessagesRequest{
 		ParticipantId: participantID,
 		PageSize:      pageSize,
 		PageToken:     pageToken,
+		ThreadId:      threadFilter,
 	})
 	if err != nil {
 		return nil, "", fmt.Errorf("get unacked messages: %w", err)
