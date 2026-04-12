@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/agynio/agynd-cli/internal/config"
 )
@@ -46,7 +47,8 @@ func codexConfig(llmBaseURL, mcpHost string, mcpServers []config.MCPServer) stri
 	builder.WriteString(payload)
 	for _, server := range mcpServers {
 		url := mcpServerURL(mcpHost, server.Port)
-		fmt.Fprintf(&builder, "\n[mcp_servers.%s]\nurl = %q\nrequired = true\nstartup_timeout_sec = 120\n", server.Name, url)
+		startupTimeout := int(mcpReadyTimeout / time.Second)
+		fmt.Fprintf(&builder, "\n[mcp_servers.%s]\nurl = %q\nrequired = true\nstartup_timeout_sec = %d\n", server.Name, url, startupTimeout)
 	}
 	return builder.String()
 }

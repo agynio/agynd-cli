@@ -29,7 +29,10 @@ const (
 	turnCompletionTimeout       = 5 * time.Minute
 	messagePublishTimeout       = 15 * time.Second
 	messageAckTimeout           = 15 * time.Second
-	mcpReadyTimeout             = 120 * time.Second
+	mcpReadyTimeout             = 3 * time.Minute
+	mcpReadyDialTimeout         = 2 * time.Second
+	mcpRetryInitialDelay        = 500 * time.Millisecond
+	mcpRetryMaxDelay            = 15 * time.Second
 )
 
 const (
@@ -421,36 +424,47 @@ func waitForMCPServers(ctx context.Context, servers []config.MCPServer, host str
 	if len(servers) == 0 {
 		return nil
 	}
-	deadline := time.NewTimer(timeout)
-	defer deadline.Stop()
 	for _, server := range servers {
-		addr := mcpServerAddress(host, server.Port)
-		attempt := 0
-		delay := 500 * time.Millisecond
-		for {
-			attempt++
-			conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
-			if err == nil {
-				_ = conn.Close()
-				break
-			}
-			log.Printf("waiting for MCP server %s at %s (attempt %d): %v", server.Name, addr, attempt, err)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-deadline.C:
-				return fmt.Errorf("MCP server %s at %s not ready after %s", server.Name, addr, timeout)
-			case <-time.After(delay):
-			}
-			if delay < 10*time.Second {
-				delay *= 2
-				if delay > 10*time.Second {
-					delay = 10 * time.Second
-				}
-			}
+		if err := waitForMCPServer(ctx, server, host, timeout); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func waitForMCPServer(ctx context.Context, server config.MCPServer, host string, timeout time.Duration) error {
+	addr := mcpServerAddress(host, server.Port)
+	deadline := time.Now().Add(timeout)
+	delay := mcpRetryInitialDelay
+	attempt := 0
+	for {
+		attempt++
+		conn, err := net.DialTimeout("tcp", addr, mcpReadyDialTimeout)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		log.Printf("waiting for MCP server %s at %s (attempt %d): %v", server.Name, addr, attempt, err)
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return fmt.Errorf("MCP server %s at %s not ready after %s", server.Name, addr, timeout)
+		}
+		wait := delay
+		if wait > remaining {
+			wait = remaining
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(wait):
+		}
+		if delay < mcpRetryMaxDelay {
+			delay *= 2
+			if delay > mcpRetryMaxDelay {
+				delay = mcpRetryMaxDelay
+			}
+		}
+	}
 }
 
 type codexThreadDefaults struct {
