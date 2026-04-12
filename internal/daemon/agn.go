@@ -57,6 +57,7 @@ func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daem
 	agnClient, err := agnsdk.Start(ctx, agnsdk.Options{
 		BinaryPath: cfg.AgentBinary,
 		Env: []string{
+			"PATH=" + agentPathValue(),
 			"AGN_CONFIG_PATH=" + configPath,
 			"OTEL_EXPORTER_OTLP_ENDPOINT=" + otlpEndpoint,
 		},

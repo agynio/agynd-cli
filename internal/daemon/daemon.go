@@ -39,21 +39,21 @@ const (
 )
 
 type Daemon struct {
-	cfg          config.Config
-	sdk          string
-	gatewayConn  platformConn
-	threads      *platform.Threads
-	agents       gatewayv1.AgentsGatewayClient
-	subscriber   *subscriber.Subscriber
-	consumer     *platform.Consumer
-	codex        codexClient
-	mapping      *codexbridge.ThreadMapping
-	mappingStore *codexbridge.ThreadMappingStore
-	tracker      *codexbridge.TurnTracker
-	agn          *agnsdk.Client
-	claude       claudeClient
-	agent        *agentsv1.Agent
-	tracingProxy *tracingproxy.Proxy
+	cfg           config.Config
+	sdk           string
+	gatewayConn   platformConn
+	threads       *platform.Threads
+	agents        gatewayv1.AgentsGatewayClient
+	subscriber    *subscriber.Subscriber
+	consumer      *platform.Consumer
+	codex         codexClient
+	mapping       *codexbridge.ThreadMapping
+	mappingStore  *codexbridge.ThreadMappingStore
+	tracker       *codexbridge.TurnTracker
+	agn           *agnsdk.Client
+	claude        claudeClient
+	agent         *agentsv1.Agent
+	tracingProxy  *tracingproxy.Proxy
 	claudeReadyMu sync.Mutex
 	claudeReady   bool
 
@@ -216,6 +216,7 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 		codex.WithBinary(cfg.AgentBinary),
 		codex.WithWorkDir(cfg.WorkDir),
 		codex.WithEnv(map[string]string{
+			"PATH":                        agentPathValue(),
 			"CODEX_HOME":                  codexHome,
 			"OPENAI_API_KEY":              cfg.LLMAPIToken,
 			"OTEL_EXPORTER_OTLP_ENDPOINT": otlpEndpoint,
