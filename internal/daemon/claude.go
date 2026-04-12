@@ -48,6 +48,10 @@ func newClaudeDaemon(ctx context.Context, cfg config.Config, version string) (*D
 	}
 	if model := strings.TrimSpace(setup.agent.GetModel()); model != "" {
 		options.Model = model
+		options.Env = append(options.Env,
+			"ANTHROPIC_MODEL="+model,
+			"ANTHROPIC_CUSTOM_MODEL_OPTION="+model,
+		)
 	}
 	if role := strings.TrimSpace(setup.agent.GetRole()); role != "" {
 		options.SystemPrompt = role
