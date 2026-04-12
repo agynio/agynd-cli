@@ -16,7 +16,7 @@ func TestWriteClaudeSettings(t *testing.T) {
 
 	baseURL := "https://example.com"
 	apiKey := "test-api-key"
-	if err := writeClaudeSettings(baseURL, apiKey, nil); err != nil {
+	if err := writeClaudeSettings(baseURL, apiKey, "127.0.0.1", nil); err != nil {
 		t.Fatalf("expected settings to be written, got %v", err)
 	}
 
@@ -73,7 +73,7 @@ func TestWriteClaudeSettingsWithMCPServers(t *testing.T) {
 		{Name: "memory", Port: 8100},
 		{Name: "cache", Port: 8200},
 	}
-	if err := writeClaudeSettings(baseURL, apiKey, mcpServers); err != nil {
+	if err := writeClaudeSettings(baseURL, apiKey, "127.0.0.1", mcpServers); err != nil {
 		t.Fatalf("expected settings to be written, got %v", err)
 	}
 
@@ -115,8 +115,8 @@ func TestWriteClaudeSettingsWithMCPServers(t *testing.T) {
 			"DISABLE_AUTOUPDATER":                      "1",
 		},
 		MCPServers: map[string]claudeMCPServer{
-			"memory": {Type: "http", URL: "http://localhost:8100/mcp"},
-			"cache":  {Type: "http", URL: "http://localhost:8200/mcp"},
+			"memory": {Type: "http", URL: "http://127.0.0.1:8100/mcp"},
+			"cache":  {Type: "http", URL: "http://127.0.0.1:8200/mcp"},
 		},
 	}
 	if !reflect.DeepEqual(got, expected) {

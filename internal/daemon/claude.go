@@ -21,12 +21,12 @@ func newClaudeDaemon(ctx context.Context, cfg config.Config, version string) (*D
 		return nil, err
 	}
 
-	if err := writeClaudeSettings(claudeBaseURL(cfg.LLMBaseURL), cfg.LLMAPIToken, cfg.MCPServers); err != nil {
+	if err := writeClaudeSettings(claudeBaseURL(cfg.LLMBaseURL), cfg.LLMAPIToken, cfg.MCPHost, cfg.MCPServers); err != nil {
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}
 
-	if err := waitForMCPServers(ctx, cfg.MCPServers, mcpReadyTimeout); err != nil {
+	if err := waitForMCPServers(ctx, cfg.MCPServers, cfg.MCPHost, mcpReadyTimeout); err != nil {
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}

@@ -14,7 +14,7 @@ func TestWriteCodexConfig(t *testing.T) {
 	t.Setenv("HOME", tmpHome)
 
 	baseURL := "https://example.com"
-	codexHome, err := writeCodexConfig(baseURL, nil)
+	codexHome, err := writeCodexConfig(baseURL, "127.0.0.1", nil)
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
@@ -54,7 +54,7 @@ func TestWriteCodexConfigWithMCPServers(t *testing.T) {
 		{Name: "memory", Port: 8100},
 		{Name: "cache", Port: 8200},
 	}
-	codexHome, err := writeCodexConfig(baseURL, mcpServers)
+	codexHome, err := writeCodexConfig(baseURL, "127.0.0.1", mcpServers)
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
@@ -81,11 +81,11 @@ env_key = "OPENAI_API_KEY"
 wire_api = "responses"
 `, baseURL) +
 		"\n[mcp_servers.memory]\n" +
-		"url = \"http://localhost:8100/mcp\"\n" +
+		"url = \"http://127.0.0.1:8100/mcp\"\n" +
 		"required = true\n" +
 		"startup_timeout_sec = 120\n" +
 		"\n[mcp_servers.cache]\n" +
-		"url = \"http://localhost:8200/mcp\"\n" +
+		"url = \"http://127.0.0.1:8200/mcp\"\n" +
 		"required = true\n" +
 		"startup_timeout_sec = 120\n"
 	if string(content) != expected {

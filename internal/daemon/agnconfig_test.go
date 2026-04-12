@@ -16,7 +16,7 @@ func TestWriteAgnConfig(t *testing.T) {
 	baseURL := "https://example.com"
 	apiKey := "test-api-key"
 	model := "test-model-id"
-	agnDir, configPath, err := writeAgnConfig(baseURL, apiKey, model, nil, nil)
+	agnDir, configPath, err := writeAgnConfig(baseURL, apiKey, model, nil, "127.0.0.1", nil)
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
@@ -56,7 +56,7 @@ func TestAgnConfigNoSummarizationInJSON(t *testing.T) {
 		t.Fatalf("expected nil summarization, got %#v", summarization)
 	}
 
-	content := agnConfig(baseURL, apiKey, model, summarization, nil)
+	content := agnConfig(baseURL, apiKey, model, summarization, "127.0.0.1", nil)
 	expected := fmt.Sprintf(agnConfigTemplate, baseURL, apiKey, model)
 	if content != expected {
 		t.Fatalf("expected config %q, got %q", expected, content)
@@ -74,7 +74,7 @@ func TestWriteAgnConfigWithMCPServers(t *testing.T) {
 		{Name: "memory", Port: 8100},
 		{Name: "filesystem", Port: 8200},
 	}
-	agnDir, configPath, err := writeAgnConfig(baseURL, apiKey, model, nil, mcpServers)
+	agnDir, configPath, err := writeAgnConfig(baseURL, apiKey, model, nil, "127.0.0.1", mcpServers)
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
@@ -96,8 +96,8 @@ func TestWriteAgnConfigWithMCPServers(t *testing.T) {
 
 	expected := fmt.Sprintf(agnConfigTemplate, baseURL, apiKey, model) +
 		"mcp:\n  servers:\n" +
-		"    memory:\n      url: http://localhost:8100/mcp\n" +
-		"    filesystem:\n      url: http://localhost:8200/mcp\n"
+		"    memory:\n      url: http://127.0.0.1:8100/mcp\n" +
+		"    filesystem:\n      url: http://127.0.0.1:8200/mcp\n"
 	if string(content) != expected {
 		t.Fatalf("expected config %q, got %q", expected, string(content))
 	}
@@ -116,7 +116,7 @@ func TestWriteAgnConfigWithSummarizationThresholds(t *testing.T) {
 		KeepTokens: &keepTokens,
 		MaxTokens:  &maxTokens,
 	}
-	_, configPath, err := writeAgnConfig(baseURL, apiKey, model, summarization, nil)
+	_, configPath, err := writeAgnConfig(baseURL, apiKey, model, summarization, "127.0.0.1", nil)
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
@@ -155,7 +155,7 @@ func TestWriteAgnConfigWithSummarizationLLMAPIKey(t *testing.T) {
 			Model: "gpt-4.1-mini",
 		},
 	}
-	agnDir, configPath, err := writeAgnConfig(baseURL, apiKey, model, summarization, nil)
+	agnDir, configPath, err := writeAgnConfig(baseURL, apiKey, model, summarization, "127.0.0.1", nil)
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
@@ -209,7 +209,7 @@ func TestWriteAgnConfigWithSummarizationLLMAPIKeyEnv(t *testing.T) {
 			Model: "gpt-4.1-mini",
 		},
 	}
-	_, configPath, err := writeAgnConfig(baseURL, apiKey, model, summarization, nil)
+	_, configPath, err := writeAgnConfig(baseURL, apiKey, model, summarization, "127.0.0.1", nil)
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
