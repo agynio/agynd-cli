@@ -17,7 +17,7 @@ func NewConsumer(threads *Threads, pageSize int32, requestTimeout time.Duration)
 	return &Consumer{threads: threads, pageSize: pageSize, requestTimeout: requestTimeout}
 }
 
-func (c *Consumer) Sync(ctx context.Context, participantID string, handle func(Message) error) error {
+func (c *Consumer) Sync(ctx context.Context, participantID string, threadID string, handle func(Message) error) error {
 	if handle == nil {
 		return fmt.Errorf("handle function is required")
 	}
@@ -28,7 +28,7 @@ func (c *Consumer) Sync(ctx context.Context, participantID string, handle func(M
 		if c.requestTimeout > 0 {
 			pageCtx, cancel = context.WithTimeout(ctx, c.requestTimeout)
 		}
-		messages, nextToken, err := c.threads.GetUnackedMessages(pageCtx, participantID, c.pageSize, pageToken)
+		messages, nextToken, err := c.threads.GetUnackedMessages(pageCtx, participantID, threadID, c.pageSize, pageToken)
 		if cancel != nil {
 			cancel()
 		}
