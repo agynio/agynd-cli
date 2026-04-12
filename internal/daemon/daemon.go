@@ -32,7 +32,7 @@ const (
 	mcpReadyTimeout             = 3 * time.Minute
 	mcpReadyDialTimeout         = 2 * time.Second
 	mcpRetryInitialDelay        = 500 * time.Millisecond
-	mcpRetryMaxDelay            = 15 * time.Second
+	mcpRetryMaxDelay            = 5 * time.Second
 )
 
 const (
@@ -434,7 +434,8 @@ func waitForMCPServers(ctx context.Context, servers []config.MCPServer, host str
 
 func waitForMCPServer(ctx context.Context, server config.MCPServer, host string, timeout time.Duration) error {
 	addr := mcpServerAddress(host, server.Port)
-	deadline := time.Now().Add(timeout)
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
 	delay := mcpRetryInitialDelay
 	attempt := 0
 	for {
@@ -445,18 +446,12 @@ func waitForMCPServer(ctx context.Context, server config.MCPServer, host string,
 			return nil
 		}
 		log.Printf("waiting for MCP server %s at %s (attempt %d): %v", server.Name, addr, attempt, err)
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			return fmt.Errorf("MCP server %s at %s not ready after %s", server.Name, addr, timeout)
-		}
-		wait := delay
-		if wait > remaining {
-			wait = remaining
-		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(wait):
+		case <-deadline.C:
+			return fmt.Errorf("MCP server %s at %s not ready after %s", server.Name, addr, timeout)
+		case <-time.After(delay):
 		}
 		if delay < mcpRetryMaxDelay {
 			delay *= 2
