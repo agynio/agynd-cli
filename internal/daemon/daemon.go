@@ -54,6 +54,8 @@ type Daemon struct {
 	claude       claudeClient
 	agent        *agentsv1.Agent
 	tracingProxy *tracingproxy.Proxy
+	claudeReadyMu sync.Mutex
+	claudeReady   bool
 
 	syncMu sync.Mutex
 }
