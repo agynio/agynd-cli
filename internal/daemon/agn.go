@@ -32,6 +32,7 @@ func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daem
 		cfg.LLMAPIToken,
 		setup.agent.GetModel(),
 		summarization,
+		cfg.MCPHost,
 		cfg.MCPServers,
 	)
 	if err != nil {
@@ -39,7 +40,7 @@ func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daem
 		return nil, err
 	}
 
-	if err := waitForMCPServers(ctx, cfg.MCPServers, mcpReadyTimeout); err != nil {
+	if err := waitForMCPServers(ctx, cfg.MCPServers, cfg.MCPHost, mcpReadyTimeout); err != nil {
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}

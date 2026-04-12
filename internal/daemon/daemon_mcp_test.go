@@ -24,7 +24,7 @@ func TestWaitForMCPServersReady(t *testing.T) {
 		{Name: "alpha", Port: portA},
 		{Name: "beta", Port: portB},
 	}
-	if err := waitForMCPServers(ctx, servers, 500*time.Millisecond); err != nil {
+	if err := waitForMCPServers(ctx, servers, "127.0.0.1", 500*time.Millisecond); err != nil {
 		t.Fatalf("expected MCP servers to be ready, got %v", err)
 	}
 }
@@ -33,7 +33,7 @@ func TestWaitForMCPServersEmpty(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	if err := waitForMCPServers(ctx, nil, 10*time.Millisecond); err != nil {
+	if err := waitForMCPServers(ctx, nil, "127.0.0.1", 10*time.Millisecond); err != nil {
 		t.Fatalf("expected no error for empty server list, got %v", err)
 	}
 }
@@ -41,7 +41,7 @@ func TestWaitForMCPServersEmpty(t *testing.T) {
 func TestWaitForMCPServersTimeout(t *testing.T) {
 	port := unusedTCPPort(t)
 
-	err := waitForMCPServers(context.Background(), []config.MCPServer{{Name: "missing", Port: port}}, 50*time.Millisecond)
+	err := waitForMCPServers(context.Background(), []config.MCPServer{{Name: "missing", Port: port}}, "127.0.0.1", 50*time.Millisecond)
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
@@ -57,7 +57,7 @@ func TestWaitForMCPServersContextCanceled(t *testing.T) {
 	timer := time.AfterFunc(20*time.Millisecond, cancel)
 	defer timer.Stop()
 
-	err := waitForMCPServers(ctx, []config.MCPServer{{Name: "missing", Port: port}}, 5*time.Second)
+	err := waitForMCPServers(ctx, []config.MCPServer{{Name: "missing", Port: port}}, "127.0.0.1", 5*time.Second)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context cancellation, got %v", err)
 	}

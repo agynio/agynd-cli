@@ -29,7 +29,10 @@ const (
 	turnCompletionTimeout       = 5 * time.Minute
 	messagePublishTimeout       = 15 * time.Second
 	messageAckTimeout           = 15 * time.Second
-	mcpReadyTimeout             = 120 * time.Second
+	mcpReadyTimeout             = 3 * time.Minute
+	mcpReadyDialTimeout         = 2 * time.Second
+	mcpRetryInitialDelay        = 500 * time.Millisecond
+	mcpRetryMaxDelay            = 5 * time.Second
 )
 
 const (
@@ -189,7 +192,7 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 	tracker := codexbridge.NewTurnTracker()
 	bridge := codexbridge.New(tracker)
 	threadsMapping := codexbridge.NewThreadMapping()
-	codexHome, err := writeCodexConfig(cfg.LLMBaseURL, cfg.MCPServers)
+	codexHome, err := writeCodexConfig(cfg.LLMBaseURL, cfg.MCPHost, cfg.MCPServers)
 	if err != nil {
 		_ = setup.gatewayConn.Close()
 		return nil, err
@@ -381,7 +384,7 @@ func (d *Daemon) ensureCodexThread(ctx context.Context, platformThreadID string)
 		}
 		return record.CodexThreadID, nil
 	}
-	if err := waitForMCPServers(ctx, d.cfg.MCPServers, mcpReadyTimeout); err != nil {
+	if err := waitForMCPServers(ctx, d.cfg.MCPServers, d.cfg.MCPHost, mcpReadyTimeout); err != nil {
 		return "", err
 	}
 	record, ok, err := d.mappingStore.Load(platformThreadID)
@@ -417,33 +420,46 @@ func (d *Daemon) ensureCodexThread(ctx context.Context, platformThreadID string)
 	return codexThreadID, nil
 }
 
-func waitForMCPServers(ctx context.Context, servers []config.MCPServer, timeout time.Duration) error {
+func waitForMCPServers(ctx context.Context, servers []config.MCPServer, host string, timeout time.Duration) error {
 	if len(servers) == 0 {
 		return nil
 	}
-	deadline := time.NewTimer(timeout)
-	defer deadline.Stop()
 	for _, server := range servers {
-		addr := fmt.Sprintf("localhost:%d", server.Port)
-		attempt := 0
-		for {
-			attempt++
-			conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
-			if err == nil {
-				_ = conn.Close()
-				break
-			}
-			log.Printf("waiting for MCP server %s at %s (attempt %d): %v", server.Name, addr, attempt, err)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-deadline.C:
-				return fmt.Errorf("MCP server %s at %s not ready after %s", server.Name, addr, timeout)
-			case <-time.After(2 * time.Second):
-			}
+		if err := waitForMCPServer(ctx, server, host, timeout); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func waitForMCPServer(ctx context.Context, server config.MCPServer, host string, timeout time.Duration) error {
+	addr := mcpServerAddress(host, server.Port)
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	delay := mcpRetryInitialDelay
+	attempt := 0
+	for {
+		attempt++
+		conn, err := net.DialTimeout("tcp", addr, mcpReadyDialTimeout)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		log.Printf("waiting for MCP server %s at %s (attempt %d): %v", server.Name, addr, attempt, err)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return fmt.Errorf("MCP server %s at %s not ready after %s", server.Name, addr, timeout)
+		case <-time.After(delay):
+		}
+		if delay < mcpRetryMaxDelay {
+			delay *= 2
+			if delay > mcpRetryMaxDelay {
+				delay = mcpRetryMaxDelay
+			}
+		}
+	}
 }
 
 type codexThreadDefaults struct {

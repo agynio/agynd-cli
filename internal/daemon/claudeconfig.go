@@ -27,7 +27,7 @@ type claudeMCPServer struct {
 	URL  string `json:"url"`
 }
 
-func writeClaudeSettings(llmBaseURL, apiKey string, mcpServers []config.MCPServer) error {
+func writeClaudeSettings(llmBaseURL, apiKey, mcpHost string, mcpServers []config.MCPServer) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("resolve home directory: %w", err)
@@ -68,7 +68,7 @@ func writeClaudeSettings(llmBaseURL, apiKey string, mcpServers []config.MCPServe
 		for _, server := range mcpServers {
 			settings.MCPServers[server.Name] = claudeMCPServer{
 				Type: "http",
-				URL:  fmt.Sprintf("http://localhost:%d/mcp", server.Port),
+				URL:  mcpServerURL(mcpHost, server.Port),
 			}
 		}
 	}

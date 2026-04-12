@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"regexp"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 )
 
 const agentConfigPath = "/agyn-bin/config.json"
+const defaultMCPHost = "127.0.0.1"
 
 var mcpServerNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
@@ -36,6 +38,7 @@ type Config struct {
 	SDK            string
 	AgentBinary    string
 	WorkDir        string
+	MCPHost        string
 	MCPServers     []MCPServer
 }
 
@@ -64,6 +67,18 @@ func fromEnv(configPath string) (Config, error) {
 	llmAPIToken := strings.TrimSpace(os.Getenv("LLM_API_TOKEN"))
 	if llmAPIToken == "" {
 		llmAPIToken = "platform"
+	}
+
+	mcpHost := strings.TrimSpace(os.Getenv("AGENT_MCP_HOST"))
+	if mcpHost == "" {
+		mcpHost = defaultMCPHost
+	} else {
+		if strings.Contains(mcpHost, "://") || strings.Contains(mcpHost, "/") {
+			return Config{}, fmt.Errorf("AGENT_MCP_HOST must be a hostname without scheme or path")
+		}
+		if host, port, err := net.SplitHostPort(mcpHost); err == nil && host != "" && port != "" {
+			return Config{}, fmt.Errorf("AGENT_MCP_HOST must not include a port")
+		}
 	}
 
 	mcpServers, err := parseMCPServers(os.Getenv("AGENT_MCP_SERVERS"))
@@ -99,6 +114,7 @@ func fromEnv(configPath string) (Config, error) {
 		SDK:            sdk,
 		AgentBinary:    agentBinary,
 		WorkDir:        workDir,
+		MCPHost:        mcpHost,
 		MCPServers:     mcpServers,
 	}, nil
 }

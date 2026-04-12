@@ -40,6 +40,7 @@ func TestFromEnvValid(t *testing.T) {
 	t.Setenv("THREAD_ID", "thread-123")
 	t.Setenv("LLM_BASE_URL", "https://llm.example")
 	t.Setenv("LLM_API_TOKEN", "token-123")
+	t.Setenv("AGENT_MCP_HOST", "mcp.internal")
 
 	cfg, err := fromEnv(configPath)
 	if err != nil {
@@ -71,6 +72,9 @@ func TestFromEnvValid(t *testing.T) {
 	}
 	if cfg.WorkDir != "/tmp/workdir" {
 		t.Fatalf("unexpected work dir: %s", cfg.WorkDir)
+	}
+	if cfg.MCPHost != "mcp.internal" {
+		t.Fatalf("unexpected MCP host: %s", cfg.MCPHost)
 	}
 }
 
@@ -123,6 +127,37 @@ func TestFromEnvDefaults(t *testing.T) {
 	}
 	if cfg.WorkDir != "/workspace" {
 		t.Fatalf("expected default workspace dir, got %s", cfg.WorkDir)
+	}
+}
+
+func TestFromEnvMCPHostDefault(t *testing.T) {
+	setRequiredEnv(t)
+	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	t.Setenv("AGENT_MCP_HOST", "")
+
+	cfg, err := fromEnv(configPath)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.MCPHost != "127.0.0.1" {
+		t.Fatalf("expected default MCP host, got %s", cfg.MCPHost)
+	}
+}
+
+func TestFromEnvMCPHostInvalid(t *testing.T) {
+	setRequiredEnv(t)
+	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+
+	t.Setenv("AGENT_MCP_HOST", "http://localhost")
+	_, err := fromEnv(configPath)
+	if err == nil {
+		t.Fatalf("expected error for AGENT_MCP_HOST with scheme")
+	}
+
+	t.Setenv("AGENT_MCP_HOST", "localhost:8100")
+	_, err = fromEnv(configPath)
+	if err == nil {
+		t.Fatalf("expected error for AGENT_MCP_HOST with port")
 	}
 }
 

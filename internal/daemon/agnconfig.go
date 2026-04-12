@@ -16,7 +16,7 @@ const agnConfigTemplate = `llm:
   model: %s
 `
 
-func writeAgnConfig(llmBaseURL, apiKey, model string, summarization *summarizationConfig, mcpServers []config.MCPServer) (string, string, error) {
+func writeAgnConfig(llmBaseURL, apiKey, model string, summarization *summarizationConfig, mcpHost string, mcpServers []config.MCPServer) (string, string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", "", fmt.Errorf("resolve home directory: %w", err)
@@ -26,14 +26,14 @@ func writeAgnConfig(llmBaseURL, apiKey, model string, summarization *summarizati
 		return "", "", fmt.Errorf("create agn config dir: %w", err)
 	}
 	configPath := filepath.Join(agnDir, "config.yaml")
-	payload := agnConfig(llmBaseURL, apiKey, model, summarization, mcpServers)
+	payload := agnConfig(llmBaseURL, apiKey, model, summarization, mcpHost, mcpServers)
 	if err := os.WriteFile(configPath, []byte(payload), 0o600); err != nil {
 		return "", "", fmt.Errorf("write agn config: %w", err)
 	}
 	return agnDir, configPath, nil
 }
 
-func agnConfig(llmBaseURL, apiKey, model string, summarization *summarizationConfig, mcpServers []config.MCPServer) string {
+func agnConfig(llmBaseURL, apiKey, model string, summarization *summarizationConfig, mcpHost string, mcpServers []config.MCPServer) string {
 	payload := fmt.Sprintf(agnConfigTemplate, llmBaseURL, apiKey, model)
 	if summarization == nil && len(mcpServers) == 0 {
 		return payload
@@ -46,7 +46,7 @@ func agnConfig(llmBaseURL, apiKey, model string, summarization *summarizationCon
 	if len(mcpServers) > 0 {
 		builder.WriteString("mcp:\n  servers:\n")
 		for _, server := range mcpServers {
-			url := fmt.Sprintf("http://localhost:%d/mcp", server.Port)
+			url := mcpServerURL(mcpHost, server.Port)
 			fmt.Fprintf(&builder, "    %s:\n      url: %s\n", server.Name, url)
 		}
 	}
