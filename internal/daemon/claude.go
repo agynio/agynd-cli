@@ -26,11 +26,6 @@ func newClaudeDaemon(ctx context.Context, cfg config.Config, version string) (*D
 		return nil, err
 	}
 
-	if err := waitForMCPServers(ctx, cfg.MCPServers, mcpReadyTimeout); err != nil {
-		_ = setup.gatewayConn.Close()
-		return nil, err
-	}
-
 	tracingProxy, err := tracingproxy.Start(ctx, tracingproxy.Config{
 		TracingAddress: cfg.TracingAddress,
 		ThreadID:       cfg.ThreadID,
@@ -77,6 +72,19 @@ func newClaudeDaemon(ctx context.Context, cfg config.Config, version string) (*D
 	}, nil
 }
 
+func (d *Daemon) ensureClaudeReady(ctx context.Context) error {
+	d.claudeReadyMu.Lock()
+	defer d.claudeReadyMu.Unlock()
+	if d.claudeReady {
+		return nil
+	}
+	if err := waitForMCPServers(ctx, d.cfg.MCPServers, mcpReadyTimeout); err != nil {
+		return err
+	}
+	d.claudeReady = true
+	return nil
+}
+
 func (d *Daemon) handleClaudeMessage(ctx context.Context, message platform.Message) error {
 	threadID := strings.TrimSpace(message.ThreadID)
 	if threadID == "" {
@@ -84,6 +92,9 @@ func (d *Daemon) handleClaudeMessage(ctx context.Context, message platform.Messa
 	}
 	inputText, err := buildInput(message)
 	if err != nil {
+		return err
+	}
+	if err := d.ensureClaudeReady(ctx); err != nil {
 		return err
 	}
 	turnCtx, cancel := context.WithTimeout(ctx, turnCompletionTimeout)
