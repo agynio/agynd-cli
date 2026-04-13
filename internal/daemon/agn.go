@@ -75,7 +75,7 @@ func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daem
 		threads:      setup.threads,
 		agents:       setup.agents,
 		runners:      setup.runners,
-		subscriber:   subscriber.New(setup.notifications, cfg.AgentID.String()),
+		subscriber:   subscriber.New(setup.notifications, cfg.AgentID.String(), cfg.ThreadID),
 		consumer:     platform.NewConsumer(setup.threads, pageSize, pageTimeout),
 		agn:          agnClient,
 		agent:        setup.agent,

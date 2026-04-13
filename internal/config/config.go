@@ -57,6 +57,11 @@ func fromEnv(configPath string) (Config, error) {
 		tracingAddress = "tracing.ziti:443"
 	}
 	threadID := strings.TrimSpace(os.Getenv("THREAD_ID"))
+	threadUUID, err := uuidutil.ParseUUID(threadID, "THREAD_ID")
+	if err != nil {
+		return Config{}, err
+	}
+	threadID = threadUUID.String()
 	llmBaseURL := strings.TrimSpace(os.Getenv("LLM_BASE_URL"))
 	if llmBaseURL == "" {
 		llmBaseURL = "http://llm-proxy.ziti:443/v1"
