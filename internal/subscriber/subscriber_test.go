@@ -60,6 +60,62 @@ func waitForRun(t *testing.T, done <-chan error) {
 	}
 }
 
+func TestPayloadThreadID(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload *structpb.Struct
+		want    string
+		ok      bool
+	}{
+		{name: "nil-payload", payload: nil, want: "", ok: false},
+		{name: "nil-fields", payload: &structpb.Struct{}, want: "", ok: false},
+		{
+			name: "missing-thread-id",
+			payload: &structpb.Struct{Fields: map[string]*structpb.Value{
+				"other": structpb.NewStringValue("value"),
+			}},
+			want: "",
+			ok:   false,
+		},
+		{
+			name: "empty-thread-id",
+			payload: &structpb.Struct{Fields: map[string]*structpb.Value{
+				"thread_id": structpb.NewStringValue(" "),
+			}},
+			want: "",
+			ok:   false,
+		},
+		{
+			name: "invalid-thread-id",
+			payload: &structpb.Struct{Fields: map[string]*structpb.Value{
+				"thread_id": structpb.NewStringValue("not-a-uuid"),
+			}},
+			want: "",
+			ok:   false,
+		},
+		{
+			name: "valid-thread-id",
+			payload: &structpb.Struct{Fields: map[string]*structpb.Value{
+				"thread_id": structpb.NewStringValue("  9E54A9CE-F2E1-4B5F-9C91-8F4C77554C30 "),
+			}},
+			want: "9e54a9ce-f2e1-4b5f-9c91-8f4c77554c30",
+			ok:   true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := payloadThreadID(test.payload)
+			if ok != test.ok {
+				t.Fatalf("expected ok=%v, got %v", test.ok, ok)
+			}
+			if got != test.want {
+				t.Fatalf("expected %q, got %q", test.want, got)
+			}
+		})
+	}
+}
+
 func TestSubscriberWakeOnMatchingThread(t *testing.T) {
 	threadID := "9d06fe19-695b-48ac-83ba-2cd82472f7c8"
 	responses := make(chan *notificationsv1.SubscribeResponse, 1)
