@@ -5,21 +5,29 @@ import (
 	"errors"
 	"io"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/agynio/agynd-cli/internal/platform"
+	"github.com/google/uuid"
+	structpb "google.golang.org/protobuf/types/known/structpb"
 )
 
 const messageCreatedEvent = "message.created"
 
 type Subscriber struct {
-	client  *platform.Notifications
-	agentID string
-	wake    chan struct{}
+	client   notificationsClient
+	agentID  string
+	threadID string
+	wake     chan struct{}
 }
 
-func New(client *platform.Notifications, agentID string) *Subscriber {
-	return &Subscriber{client: client, agentID: agentID, wake: make(chan struct{}, 1)}
+type notificationsClient interface {
+	Subscribe(ctx context.Context, agentID string) (platform.SubscribeStream, error)
+}
+
+func New(client notificationsClient, agentID string, threadID string) *Subscriber {
+	return &Subscriber{client: client, agentID: agentID, threadID: threadID, wake: make(chan struct{}, 1)}
 }
 
 func (s *Subscriber) Run(ctx context.Context) error {
@@ -60,11 +68,16 @@ func (s *Subscriber) Run(ctx context.Context) error {
 			if envelope == nil {
 				continue
 			}
-			if envelope.GetEvent() == messageCreatedEvent {
-				select {
-				case s.wake <- struct{}{}:
-				default:
-				}
+			if envelope.GetEvent() != messageCreatedEvent {
+				continue
+			}
+			payloadThreadID, ok := payloadThreadID(envelope.GetPayload())
+			if !ok || payloadThreadID != s.threadID {
+				continue
+			}
+			select {
+			case s.wake <- struct{}{}:
+			default:
 			}
 		}
 	}
@@ -97,4 +110,27 @@ func nextBackoff(current time.Duration) time.Duration {
 		return 30 * time.Second
 	}
 	return next
+}
+
+func payloadThreadID(payload *structpb.Struct) (string, bool) {
+	if payload == nil {
+		return "", false
+	}
+	fields := payload.GetFields()
+	if fields == nil {
+		return "", false
+	}
+	value, ok := fields["thread_id"]
+	if !ok || value == nil {
+		return "", false
+	}
+	raw := strings.TrimSpace(value.GetStringValue())
+	if raw == "" {
+		return "", false
+	}
+	parsed, err := uuid.Parse(raw)
+	if err != nil {
+		return "", false
+	}
+	return parsed.String(), true
 }

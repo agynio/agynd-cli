@@ -8,11 +8,15 @@ import (
 	"testing"
 )
 
-const validAgentID = "550e8400-e29b-41d4-a716-446655440000"
+const (
+	validAgentID  = "550e8400-e29b-41d4-a716-446655440000"
+	validThreadID = "3f7fd7e3-5c6c-4a1e-8f4e-69c0030d3ed7"
+)
 
 func setRequiredEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("AGENT_ID", validAgentID)
+	t.Setenv("THREAD_ID", validThreadID)
 }
 
 func writeAgentConfig(t *testing.T, sdk, bin string) string {
@@ -37,7 +41,7 @@ func TestFromEnvValid(t *testing.T) {
 	t.Setenv("WORKSPACE_DIR", "/tmp/workdir")
 	t.Setenv("GATEWAY_ADDRESS", "gateway:1234")
 	t.Setenv("TRACING_ADDRESS", "tracing:5678")
-	t.Setenv("THREAD_ID", "thread-123")
+	t.Setenv("THREAD_ID", "9d06fe19-695b-48ac-83ba-2cd82472f7c8")
 	t.Setenv("LLM_BASE_URL", "https://llm.example")
 	t.Setenv("LLM_API_TOKEN", "token-123")
 
@@ -54,7 +58,7 @@ func TestFromEnvValid(t *testing.T) {
 	if cfg.TracingAddress != "tracing:5678" {
 		t.Fatalf("unexpected tracing address: %s", cfg.TracingAddress)
 	}
-	if cfg.ThreadID != "thread-123" {
+	if cfg.ThreadID != "9d06fe19-695b-48ac-83ba-2cd82472f7c8" {
 		t.Fatalf("unexpected thread id: %s", cfg.ThreadID)
 	}
 	if cfg.LLMBaseURL != "https://llm.example" {
@@ -95,6 +99,7 @@ func TestFromEnvMissingRequired(t *testing.T) {
 		expected string
 	}{
 		{name: "agent-id", missing: "AGENT_ID", expected: "AGENT_ID"},
+		{name: "thread-id", missing: "THREAD_ID", expected: "THREAD_ID"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -171,13 +176,13 @@ func TestFromEnvTracingAddressCustom(t *testing.T) {
 func TestFromEnvThreadID(t *testing.T) {
 	setRequiredEnv(t)
 	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
-	t.Setenv("THREAD_ID", "  thread-abc ")
+	t.Setenv("THREAD_ID", "  9E54A9CE-F2E1-4B5F-9C91-8F4C77554C30 ")
 
 	cfg, err := fromEnv(configPath)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if cfg.ThreadID != "thread-abc" {
+	if cfg.ThreadID != "9e54a9ce-f2e1-4b5f-9c91-8f4c77554c30" {
 		t.Fatalf("unexpected thread id: %q", cfg.ThreadID)
 	}
 }
@@ -187,12 +192,26 @@ func TestFromEnvThreadIDEmpty(t *testing.T) {
 	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
 	t.Setenv("THREAD_ID", "")
 
-	cfg, err := fromEnv(configPath)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
+	_, err := fromEnv(configPath)
+	if err == nil {
+		t.Fatal("expected error for missing THREAD_ID")
 	}
-	if cfg.ThreadID != "" {
-		t.Fatalf("expected empty thread id, got %q", cfg.ThreadID)
+	if !strings.Contains(err.Error(), "THREAD_ID") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestFromEnvThreadIDInvalid(t *testing.T) {
+	setRequiredEnv(t)
+	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	t.Setenv("THREAD_ID", "not-a-uuid")
+
+	_, err := fromEnv(configPath)
+	if err == nil {
+		t.Fatal("expected error for invalid THREAD_ID")
+	}
+	if !strings.Contains(err.Error(), "THREAD_ID") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
