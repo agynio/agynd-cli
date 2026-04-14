@@ -21,6 +21,11 @@ func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daem
 		return nil, err
 	}
 
+	if err := runInitScripts(ctx, setup.agents, cfg.AgentID.String(), cfg.WorkDir); err != nil {
+		_ = setup.gatewayConn.Close()
+		return nil, err
+	}
+
 	summarization, err := parseAgentSummarization(setup.agent.GetConfiguration())
 	if err != nil {
 		_ = setup.gatewayConn.Close()
