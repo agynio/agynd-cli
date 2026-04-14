@@ -21,6 +21,11 @@ func newClaudeDaemon(ctx context.Context, cfg config.Config, version string) (*D
 		return nil, err
 	}
 
+	if err := runInitScripts(ctx, setup.agents, cfg.AgentID.String(), cfg.WorkDir); err != nil {
+		_ = setup.gatewayConn.Close()
+		return nil, err
+	}
+
 	if err := writeClaudeSettings(claudeBaseURL(cfg.LLMBaseURL), cfg.LLMAPIToken, cfg.MCPServers); err != nil {
 		_ = setup.gatewayConn.Close()
 		return nil, err
