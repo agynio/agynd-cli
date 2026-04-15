@@ -209,10 +209,24 @@ func captureStdoutStderr(t *testing.T) func() string {
 	previousStderr := os.Stderr
 	os.Stdout = writer
 	os.Stderr = writer
+	closed := false
 
-	return func() string {
+	restore := func() {
 		os.Stdout = previousStdout
 		os.Stderr = previousStderr
+	}
+
+	t.Cleanup(func() {
+		restore()
+		if closed {
+			return
+		}
+		_ = writer.Close()
+		_ = reader.Close()
+	})
+
+	return func() string {
+		restore()
 		if err := writer.Close(); err != nil {
 			t.Fatalf("expected pipe close to succeed, got %v", err)
 		}
@@ -223,6 +237,7 @@ func captureStdoutStderr(t *testing.T) func() string {
 		if err := reader.Close(); err != nil {
 			t.Fatalf("expected pipe close to succeed, got %v", err)
 		}
+		closed = true
 		return string(output)
 	}
 }
