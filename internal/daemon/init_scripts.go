@@ -1,11 +1,11 @@
 package daemon
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -22,9 +22,10 @@ type initScriptsClient interface {
 }
 
 type initScript struct {
-	ID        string
-	CreatedAt time.Time
-	Script    string
+	ID          string
+	CreatedAt   time.Time
+	Script      string
+	Description string
 }
 
 func runInitScripts(ctx context.Context, client initScriptsClient, agentID string, workDir string) error {
@@ -100,27 +101,41 @@ func initScriptFromProto(script *agentsv1.InitScript) (initScript, error) {
 	if strings.TrimSpace(rawScript) == "" {
 		return initScript{}, fmt.Errorf("init script script is required")
 	}
+	description := strings.TrimSpace(script.GetDescription())
 	return initScript{
-		ID:        id,
-		CreatedAt: createdAt.AsTime(),
-		Script:    rawScript,
+		ID:          id,
+		CreatedAt:   createdAt.AsTime(),
+		Script:      rawScript,
+		Description: description,
 	}, nil
 }
 
 func executeInitScript(ctx context.Context, script initScript, workDir string) error {
+	logInitScriptStart(script)
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-lc", script.Script)
 	if strings.TrimSpace(workDir) != "" {
 		cmd.Dir = workDir
 	}
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			log.Printf("init script %s failed: %s", script.ID, strings.TrimSpace(stderr.String()))
+			log.Printf("init script %s exited with code %d", script.ID, exitErr.ExitCode())
 			return nil
 		}
 		return fmt.Errorf("run init script %s: %w", script.ID, err)
 	}
 	return nil
+}
+
+func logInitScriptStart(script initScript) {
+	if script.Description == "" {
+		log.Printf("running init script %s", script.ID)
+		return
+	}
+	log.Printf("running init script %s: %s", script.ID, script.Description)
 }

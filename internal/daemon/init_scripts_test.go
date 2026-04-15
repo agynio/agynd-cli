@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -41,7 +42,8 @@ func TestInitScriptFromProtoValid(t *testing.T) {
 			Id:        "script-1",
 			CreatedAt: timestamppb.New(createdAt),
 		},
-		Script: "echo ok",
+		Script:      "echo ok",
+		Description: " setup description ",
 	}
 	script, err := initScriptFromProto(proto)
 	if err != nil {
@@ -55,6 +57,9 @@ func TestInitScriptFromProtoValid(t *testing.T) {
 	}
 	if script.Script != "echo ok" {
 		t.Fatalf("unexpected script: %q", script.Script)
+	}
+	if script.Description != "setup description" {
+		t.Fatalf("unexpected description: %q", script.Description)
 	}
 }
 
@@ -170,15 +175,54 @@ func TestExecuteInitScriptNonZeroLogsAndContinues(t *testing.T) {
 		log.SetFlags(previousFlags)
 	}()
 
+	captureOutput := captureStdoutStderr(t)
+
 	script := initScript{
-		ID:        "script-err",
-		CreatedAt: time.Now(),
-		Script:    "echo bad 1>&2; exit 2",
+		ID:          "script-err",
+		CreatedAt:   time.Now(),
+		Description: "setup step",
+		Script:      "echo ok; echo bad 1>&2; exit 2",
 	}
 	if err := executeInitScript(context.Background(), script, t.TempDir()); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if !strings.Contains(buffer.String(), "init script script-err failed: bad") {
-		t.Fatalf("unexpected log output: %q", buffer.String())
+	output := captureOutput()
+	if !strings.Contains(output, "ok") || !strings.Contains(output, "bad") {
+		t.Fatalf("unexpected command output: %q", output)
+	}
+	logOutput := buffer.String()
+	if !strings.Contains(logOutput, "running init script script-err: setup step") {
+		t.Fatalf("unexpected start log output: %q", logOutput)
+	}
+	if !strings.Contains(logOutput, "init script script-err exited with code 2") {
+		t.Fatalf("unexpected exit log output: %q", logOutput)
+	}
+}
+
+func captureStdoutStderr(t *testing.T) func() string {
+	t.Helper()
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("expected pipe creation to succeed, got %v", err)
+	}
+	previousStdout := os.Stdout
+	previousStderr := os.Stderr
+	os.Stdout = writer
+	os.Stderr = writer
+
+	return func() string {
+		os.Stdout = previousStdout
+		os.Stderr = previousStderr
+		if err := writer.Close(); err != nil {
+			t.Fatalf("expected pipe close to succeed, got %v", err)
+		}
+		output, err := io.ReadAll(reader)
+		if err != nil {
+			t.Fatalf("expected pipe read to succeed, got %v", err)
+		}
+		if err := reader.Close(); err != nil {
+			t.Fatalf("expected pipe close to succeed, got %v", err)
+		}
+		return string(output)
 	}
 }
