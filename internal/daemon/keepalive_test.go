@@ -101,6 +101,7 @@ func TestTouchActiveWorkloadCallsTouch(t *testing.T) {
 		cfg:     config.Config{AgentID: uuid.MustParse(testAgentID)},
 		runners: fake,
 	}
+	daemon.processing.Store(true)
 	touched, err := daemon.touchActiveWorkload(context.Background(), "thread-1")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -109,6 +110,31 @@ func TestTouchActiveWorkloadCallsTouch(t *testing.T) {
 		t.Fatal("expected workload to be touched")
 	}
 	if len(fake.touchCalls) != 1 || fake.touchCalls[0] != workload.ID {
+		t.Fatalf("unexpected touch calls: %v", fake.touchCalls)
+	}
+}
+
+func TestTouchActiveWorkloadSkipsWhenIdle(t *testing.T) {
+	base := time.Date(2024, 7, 1, 12, 0, 0, 0, time.UTC)
+	workload := platform.Workload{
+		ID:        "workload-1",
+		AgentID:   testAgentID,
+		Status:    runnersv1.WorkloadStatus_WORKLOAD_STATUS_RUNNING,
+		CreatedAt: base,
+	}
+	fake := &fakeRunnersClient{listResponses: []listResponse{{workloads: []platform.Workload{workload}}}}
+	daemon := &Daemon{
+		cfg:     config.Config{AgentID: uuid.MustParse(testAgentID)},
+		runners: fake,
+	}
+	touched, err := daemon.touchActiveWorkload(context.Background(), "thread-1")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if touched {
+		t.Fatal("expected no workload to be touched")
+	}
+	if len(fake.touchCalls) != 0 {
 		t.Fatalf("unexpected touch calls: %v", fake.touchCalls)
 	}
 }
@@ -128,6 +154,7 @@ func TestTouchActiveWorkloadSkipsNonRunning(t *testing.T) {
 		cfg:     config.Config{AgentID: uuid.MustParse(testAgentID)},
 		runners: fake,
 	}
+	daemon.processing.Store(true)
 	touched, err := daemon.touchActiveWorkload(context.Background(), "thread-1")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)

@@ -41,6 +41,9 @@ func (d *Daemon) runKeepalive(ctx context.Context) {
 }
 
 func (d *Daemon) touchActiveWorkload(ctx context.Context, threadID string) (bool, error) {
+	if !d.processing.Load() {
+		return false, nil
+	}
 	workload, ok, err := d.findActiveWorkload(ctx, threadID)
 	if err != nil {
 		return false, err

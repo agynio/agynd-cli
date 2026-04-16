@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	agnsdk "github.com/agynio/agn-sdk-go"
@@ -58,7 +59,8 @@ type Daemon struct {
 	claudeReadyMu sync.Mutex
 	claudeReady   bool
 
-	syncMu sync.Mutex
+	processing atomic.Bool
+	syncMu     sync.Mutex
 }
 
 type platformConn interface {
@@ -310,7 +312,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 func (d *Daemon) syncMessages(ctx context.Context) error {
 	d.syncMu.Lock()
-	defer d.syncMu.Unlock()
+	d.processing.Store(true)
+	defer func() {
+		d.processing.Store(false)
+		d.syncMu.Unlock()
+	}()
 
 	return d.consumer.Sync(ctx, d.cfg.AgentID.String(), d.cfg.ThreadID, func(message platform.Message) error {
 		return d.handleMessage(ctx, message)
