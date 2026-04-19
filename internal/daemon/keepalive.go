@@ -15,6 +15,7 @@ const (
 func (d *Daemon) runKeepalive(ctx context.Context) {
 	workloadID := strings.TrimSpace(d.cfg.WorkloadID)
 	if workloadID == "" {
+		log.Printf("workload keepalive disabled: missing WORKLOAD_ID")
 		return
 	}
 

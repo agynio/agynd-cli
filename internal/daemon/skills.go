@@ -144,6 +144,9 @@ func validateSkillName(name string) error {
 	if name == "" {
 		return fmt.Errorf("skill name is required")
 	}
+	if name == "." || name == ".." {
+		return fmt.Errorf("skill name %q is not allowed", name)
+	}
 	if strings.Contains(name, "/") || strings.Contains(name, "\\") {
 		return fmt.Errorf("skill name %q contains path separator", name)
 	}
