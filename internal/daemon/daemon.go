@@ -80,7 +80,6 @@ type claudeClient interface {
 }
 
 type runnersClient interface {
-	ListWorkloadsByThread(ctx context.Context, threadID string, pageSize int32, pageToken string) ([]platform.Workload, string, error)
 	TouchWorkload(ctx context.Context, workloadID string) error
 }
 
@@ -91,6 +90,7 @@ type platformSetup struct {
 	agents        gatewayv1.AgentsGatewayClient
 	runners       *platform.Runners
 	agent         *agentsv1.Agent
+	skills        []skill
 }
 
 func New(ctx context.Context, cfg config.Config, version string) (*Daemon, error) {
@@ -106,7 +106,7 @@ func New(ctx context.Context, cfg config.Config, version string) (*Daemon, error
 	}
 }
 
-func connectPlatform(ctx context.Context, cfg config.Config) (*platformSetup, error) {
+func connectPlatform(ctx context.Context, cfg config.Config) (*platformSetup, config.Config, error) {
 	backoff := []time.Duration{
 		1 * time.Second,
 		1 * time.Second,
@@ -123,11 +123,11 @@ func connectPlatform(ctx context.Context, cfg config.Config) (*platformSetup, er
 	var lastErr error
 	for i, delay := range backoff {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, config.Config{}, err
 		}
-		setup, err := tryConnectPlatform(ctx, cfg)
+		setup, updatedCfg, err := tryConnectPlatform(ctx, cfg)
 		if err == nil {
-			return setup, nil
+			return setup, updatedCfg, nil
 		}
 		lastErr = err
 		log.Printf(
@@ -139,29 +139,29 @@ func connectPlatform(ctx context.Context, cfg config.Config) (*platformSetup, er
 		)
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, config.Config{}, ctx.Err()
 		case <-time.After(delay):
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, config.Config{}, err
 	}
-	setup, err := tryConnectPlatform(ctx, cfg)
+	setup, updatedCfg, err := tryConnectPlatform(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf(
+		return nil, config.Config{}, fmt.Errorf(
 			"platform connect failed after %d attempts: %w (previous: %v)",
 			len(backoff)+1,
 			err,
 			lastErr,
 		)
 	}
-	return setup, nil
+	return setup, updatedCfg, nil
 }
 
-func tryConnectPlatform(ctx context.Context, cfg config.Config) (*platformSetup, error) {
+func tryConnectPlatform(ctx context.Context, cfg config.Config) (*platformSetup, config.Config, error) {
 	gatewayConn, err := platform.DialGateway(cfg.GatewayAddress)
 	if err != nil {
-		return nil, fmt.Errorf("dial gateway: %w", err)
+		return nil, config.Config{}, fmt.Errorf("dial gateway: %w", err)
 	}
 
 	threadsGateway := gatewayv1.NewThreadsGatewayClient(gatewayConn)
@@ -176,13 +176,34 @@ func tryConnectPlatform(ctx context.Context, cfg config.Config) (*platformSetup,
 	agentResp, err := agentsClient.GetAgent(ctx, &agentsv1.GetAgentRequest{Id: cfg.AgentID.String()})
 	if err != nil {
 		_ = gatewayConn.Close()
-		return nil, fmt.Errorf("get agent: %w", err)
+		return nil, config.Config{}, fmt.Errorf("get agent: %w", err)
 	}
 	agent := agentResp.GetAgent()
 	if agent == nil {
 		_ = gatewayConn.Close()
-		return nil, fmt.Errorf("agent not found")
+		return nil, config.Config{}, fmt.Errorf("agent not found")
 	}
+
+	skills, err := listSkills(ctx, agentsClient, cfg.AgentID.String())
+	if err != nil {
+		_ = gatewayConn.Close()
+		return nil, config.Config{}, fmt.Errorf("list skills: %w", err)
+	}
+
+	mcpDefinitions, err := listMCPs(ctx, agentsClient, cfg.AgentID.String())
+	if err != nil {
+		_ = gatewayConn.Close()
+		return nil, config.Config{}, fmt.Errorf("list MCPs: %w", err)
+	}
+
+	resolvedMCPs, err := resolveMCPServers(mcpDefinitions, cfg.MCPServers, cfg.MCPPort)
+	if err != nil {
+		_ = gatewayConn.Close()
+		return nil, config.Config{}, err
+	}
+	updatedCfg := cfg
+	updatedCfg.MCPServers = resolvedMCPs
+	updatedCfg.MCPPort = nil
 
 	return &platformSetup{
 		gatewayConn:   gatewayConn,
@@ -191,16 +212,18 @@ func tryConnectPlatform(ctx context.Context, cfg config.Config) (*platformSetup,
 		agents:        agentsClient,
 		runners:       runnersClient,
 		agent:         agent,
-	}, nil
+		skills:        skills,
+	}, updatedCfg, nil
 }
 
 func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Daemon, error) {
-	setup, err := connectPlatform(ctx, cfg)
+	setup, updatedCfg, err := connectPlatform(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
+	cfg = updatedCfg
 
-	if err := runInitScripts(ctx, setup.agents, cfg.AgentID.String(), cfg.WorkDir); err != nil {
+	if _, err := writeSkills(cfg.SDK, setup.skills); err != nil {
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}
@@ -210,6 +233,11 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 	threadsMapping := codexbridge.NewThreadMapping()
 	codexHome, err := writeCodexConfig(cfg.LLMBaseURL, cfg.MCPServers)
 	if err != nil {
+		_ = setup.gatewayConn.Close()
+		return nil, err
+	}
+
+	if err := runInitScripts(ctx, setup.agents, cfg.AgentID.String(), cfg.WorkDir); err != nil {
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}
@@ -223,6 +251,7 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 	tracingProxy, err := tracingproxy.Start(ctx, tracingproxy.Config{
 		TracingAddress: cfg.TracingAddress,
 		ThreadID:       cfg.ThreadID,
+		WorkloadID:     cfg.WorkloadID,
 	})
 	if err != nil {
 		_ = setup.gatewayConn.Close()

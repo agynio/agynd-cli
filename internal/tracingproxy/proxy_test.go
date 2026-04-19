@@ -51,6 +51,33 @@ func TestInjectThreadID(t *testing.T) {
 	}
 }
 
+func TestInjectWorkloadID(t *testing.T) {
+	req := &collectortracev1.ExportTraceServiceRequest{
+		ResourceSpans: []*tracev1.ResourceSpans{
+			{
+				Resource: &resourcev1.Resource{
+					Attributes: []*commonv1.KeyValue{
+						{Key: "existing", Value: stringValue("keep")},
+					},
+				},
+			},
+		},
+	}
+
+	injectWorkloadID(req, "workload-1")
+
+	resource := req.ResourceSpans[0].Resource
+	if value, ok := findAttribute(resource, "existing"); !ok || value.GetStringValue() != "keep" {
+		t.Fatalf("expected existing attribute preserved, got %v", value)
+	}
+	if value, ok := findAttribute(resource, workloadIDAttributeKey); !ok || value.GetStringValue() != "workload-1" {
+		t.Fatalf("expected workload id injected, got %v", value)
+	}
+	if len(resource.Attributes) != 2 {
+		t.Fatalf("expected 2 attributes, got %d", len(resource.Attributes))
+	}
+}
+
 func TestInjectThreadIDOverwritesExisting(t *testing.T) {
 	req := &collectortracev1.ExportTraceServiceRequest{
 		ResourceSpans: []*tracev1.ResourceSpans{
@@ -118,7 +145,7 @@ func TestProxyForwardsToUpstream(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	proxy, err := Start(ctx, Config{TracingAddress: listener.Addr().String(), ThreadID: "thread-4"})
+	proxy, err := Start(ctx, Config{TracingAddress: listener.Addr().String(), ThreadID: "thread-4", WorkloadID: "workload-4"})
 	if err != nil {
 		t.Fatalf("start proxy: %v", err)
 	}
@@ -147,6 +174,10 @@ func TestProxyForwardsToUpstream(t *testing.T) {
 	value, ok := findAttribute(forwarded.ResourceSpans[0].Resource, threadIDAttributeKey)
 	if !ok || value.GetStringValue() != "thread-4" {
 		t.Fatalf("expected forwarded request to include thread id, got %v", value)
+	}
+	value, ok = findAttribute(forwarded.ResourceSpans[0].Resource, workloadIDAttributeKey)
+	if !ok || value.GetStringValue() != "workload-4" {
+		t.Fatalf("expected forwarded request to include workload id, got %v", value)
 	}
 }
 
@@ -182,6 +213,9 @@ func TestProxyNoThreadIDPassthrough(t *testing.T) {
 	forwarded := awaitRequest(t, requests)
 	if _, ok := findAttribute(forwarded.ResourceSpans[0].Resource, threadIDAttributeKey); ok {
 		t.Fatal("expected no thread id injected")
+	}
+	if _, ok := findAttribute(forwarded.ResourceSpans[0].Resource, workloadIDAttributeKey); ok {
+		t.Fatal("expected no workload id injected")
 	}
 	value, ok := findAttribute(forwarded.ResourceSpans[0].Resource, "existing")
 	if !ok || value.GetStringValue() != "keep" {

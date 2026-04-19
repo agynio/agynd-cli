@@ -31,12 +31,14 @@ type Config struct {
 	GatewayAddress string
 	TracingAddress string
 	ThreadID       string
+	WorkloadID     string
 	LLMBaseURL     string
 	LLMAPIToken    string
 	SDK            string
 	AgentBinary    string
 	WorkDir        string
 	MCPServers     []MCPServer
+	MCPPort        *int
 }
 
 func FromEnv() (Config, error) {
@@ -62,6 +64,12 @@ func fromEnv(configPath string) (Config, error) {
 		return Config{}, err
 	}
 	threadID = threadUUID.String()
+	workloadID := strings.TrimSpace(os.Getenv("WORKLOAD_ID"))
+	workloadUUID, err := uuidutil.ParseUUID(workloadID, "WORKLOAD_ID")
+	if err != nil {
+		return Config{}, err
+	}
+	workloadID = workloadUUID.String()
 	llmBaseURL := strings.TrimSpace(os.Getenv("LLM_BASE_URL"))
 	if llmBaseURL == "" {
 		llmBaseURL = "http://llm-proxy.ziti:443/v1"
@@ -72,6 +80,10 @@ func fromEnv(configPath string) (Config, error) {
 	}
 
 	mcpServers, err := parseMCPServers(os.Getenv("AGENT_MCP_SERVERS"))
+	if err != nil {
+		return Config{}, err
+	}
+	mcpPort, err := parseMCPPort(os.Getenv("MCP_PORT"))
 	if err != nil {
 		return Config{}, err
 	}
@@ -99,12 +111,14 @@ func fromEnv(configPath string) (Config, error) {
 		GatewayAddress: gatewayAddress,
 		TracingAddress: tracingAddress,
 		ThreadID:       threadID,
+		WorkloadID:     workloadID,
 		LLMBaseURL:     llmBaseURL,
 		LLMAPIToken:    llmAPIToken,
 		SDK:            sdk,
 		AgentBinary:    agentBinary,
 		WorkDir:        workDir,
 		MCPServers:     mcpServers,
+		MCPPort:        mcpPort,
 	}, nil
 }
 
@@ -154,4 +168,16 @@ func parseMCPServers(raw string) ([]MCPServer, error) {
 		servers = append(servers, MCPServer{Name: name, Port: port})
 	}
 	return servers, nil
+}
+
+func parseMCPPort(raw string) (*int, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return nil, nil
+	}
+	port, err := strconv.Atoi(value)
+	if err != nil || port <= 0 || port > 65535 {
+		return nil, fmt.Errorf("MCP_PORT has invalid port %q", value)
+	}
+	return &port, nil
 }

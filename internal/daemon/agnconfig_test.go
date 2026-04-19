@@ -16,7 +16,7 @@ func TestWriteAgnConfig(t *testing.T) {
 	baseURL := "https://example.com"
 	apiKey := "test-api-key"
 	model := "test-model-id"
-	agnDir, configPath, err := writeAgnConfig(baseURL, apiKey, model, nil, nil)
+	agnDir, configPath, err := writeAgnConfig(baseURL, apiKey, model, "", nil, nil)
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
@@ -56,7 +56,7 @@ func TestAgnConfigNoSummarizationInJSON(t *testing.T) {
 		t.Fatalf("expected nil summarization, got %#v", summarization)
 	}
 
-	content := agnConfig(baseURL, apiKey, model, summarization, nil)
+	content := agnConfig(baseURL, apiKey, model, "", summarization, nil)
 	expected := fmt.Sprintf(agnConfigTemplate, baseURL, apiKey, model)
 	if content != expected {
 		t.Fatalf("expected config %q, got %q", expected, content)
@@ -74,7 +74,7 @@ func TestWriteAgnConfigWithMCPServers(t *testing.T) {
 		{Name: "memory", Port: 8100},
 		{Name: "filesystem", Port: 8200},
 	}
-	agnDir, configPath, err := writeAgnConfig(baseURL, apiKey, model, nil, mcpServers)
+	agnDir, configPath, err := writeAgnConfig(baseURL, apiKey, model, "", nil, mcpServers)
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
@@ -116,7 +116,7 @@ func TestWriteAgnConfigWithSummarizationThresholds(t *testing.T) {
 		KeepTokens: &keepTokens,
 		MaxTokens:  &maxTokens,
 	}
-	_, configPath, err := writeAgnConfig(baseURL, apiKey, model, summarization, nil)
+	_, configPath, err := writeAgnConfig(baseURL, apiKey, model, "", summarization, nil)
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
@@ -155,7 +155,7 @@ func TestWriteAgnConfigWithSummarizationLLMAPIKey(t *testing.T) {
 			Model: "gpt-4.1-mini",
 		},
 	}
-	agnDir, configPath, err := writeAgnConfig(baseURL, apiKey, model, summarization, nil)
+	agnDir, configPath, err := writeAgnConfig(baseURL, apiKey, model, "", summarization, nil)
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
@@ -209,7 +209,7 @@ func TestWriteAgnConfigWithSummarizationLLMAPIKeyEnv(t *testing.T) {
 			Model: "gpt-4.1-mini",
 		},
 	}
-	_, configPath, err := writeAgnConfig(baseURL, apiKey, model, summarization, nil)
+	_, configPath, err := writeAgnConfig(baseURL, apiKey, model, "", summarization, nil)
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
@@ -228,6 +228,33 @@ func TestWriteAgnConfigWithSummarizationLLMAPIKeyEnv(t *testing.T) {
 		"    auth:\n" +
 		"      api_key_env: SUMMARIZE_KEY\n" +
 		"    model: gpt-4.1-mini\n"
+	if string(content) != expected {
+		t.Fatalf("expected config %q, got %q", expected, string(content))
+	}
+}
+
+func TestWriteAgnConfigWithSystemPrompt(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	baseURL := "https://example.com"
+	apiKey := "test-api-key"
+	model := "test-model-id"
+	systemPrompt := "You are a helpful agent.\nFollow the guidelines."
+	_, configPath, err := writeAgnConfig(baseURL, apiKey, model, systemPrompt, nil, nil)
+	if err != nil {
+		t.Fatalf("expected config to be written, got %v", err)
+	}
+
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("expected config to be readable, got %v", err)
+	}
+
+	expected := fmt.Sprintf(agnConfigTemplate, baseURL, apiKey, model) +
+		"system_prompt: |\n" +
+		"  You are a helpful agent.\n" +
+		"  Follow the guidelines.\n"
 	if string(content) != expected {
 		t.Fatalf("expected config %q, got %q", expected, string(content))
 	}
