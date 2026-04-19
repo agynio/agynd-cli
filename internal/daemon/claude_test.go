@@ -71,6 +71,14 @@ func (f *fakeClaudeThreadsClient) GetThreads(ctx context.Context, in *threadsv1.
 	return nil, fmt.Errorf("GetThreads not implemented")
 }
 
+func (f *fakeClaudeThreadsClient) GetOrganizationThreads(ctx context.Context, in *threadsv1.GetOrganizationThreadsRequest, opts ...grpc.CallOption) (*threadsv1.GetOrganizationThreadsResponse, error) {
+	return nil, fmt.Errorf("GetOrganizationThreads not implemented")
+}
+
+func (f *fakeClaudeThreadsClient) GetThread(ctx context.Context, in *threadsv1.GetThreadRequest, opts ...grpc.CallOption) (*threadsv1.GetThreadResponse, error) {
+	return nil, fmt.Errorf("GetThread not implemented")
+}
+
 func (f *fakeClaudeThreadsClient) GetMessages(ctx context.Context, in *threadsv1.GetMessagesRequest, opts ...grpc.CallOption) (*threadsv1.GetMessagesResponse, error) {
 	return nil, fmt.Errorf("GetMessages not implemented")
 }

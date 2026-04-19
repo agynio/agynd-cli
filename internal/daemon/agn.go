@@ -16,12 +16,13 @@ func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daem
 	// version is unused: the agn SDK has no client-info metadata.
 	_ = version
 
-	setup, err := connectPlatform(ctx, cfg)
+	setup, updatedCfg, err := connectPlatform(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
+	cfg = updatedCfg
 
-	if err := runInitScripts(ctx, setup.agents, cfg.AgentID.String(), cfg.WorkDir); err != nil {
+	if _, err := writeSkills(cfg.SDK, setup.skills); err != nil {
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}
@@ -31,15 +32,22 @@ func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daem
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}
+	systemPrompt := buildSystemPrompt(setup.agent.GetRole(), setup.skills)
 
 	_, configPath, err := writeAgnConfig(
 		cfg.LLMBaseURL,
 		cfg.LLMAPIToken,
 		setup.agent.GetModel(),
+		systemPrompt,
 		summarization,
 		cfg.MCPServers,
 	)
 	if err != nil {
+		_ = setup.gatewayConn.Close()
+		return nil, err
+	}
+
+	if err := runInitScripts(ctx, setup.agents, cfg.AgentID.String(), cfg.WorkDir); err != nil {
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}
@@ -52,6 +60,7 @@ func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daem
 	tracingProxy, err := tracingproxy.Start(ctx, tracingproxy.Config{
 		TracingAddress: cfg.TracingAddress,
 		ThreadID:       cfg.ThreadID,
+		WorkloadID:     cfg.WorkloadID,
 	})
 	if err != nil {
 		_ = setup.gatewayConn.Close()

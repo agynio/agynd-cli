@@ -16,12 +16,13 @@ func newClaudeDaemon(ctx context.Context, cfg config.Config, version string) (*D
 	// version is unused: the Claude SDK has no client-info metadata.
 	_ = version
 
-	setup, err := connectPlatform(ctx, cfg)
+	setup, updatedCfg, err := connectPlatform(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
+	cfg = updatedCfg
 
-	if err := runInitScripts(ctx, setup.agents, cfg.AgentID.String(), cfg.WorkDir); err != nil {
+	if _, err := writeSkills(cfg.SDK, setup.skills); err != nil {
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}
@@ -31,9 +32,15 @@ func newClaudeDaemon(ctx context.Context, cfg config.Config, version string) (*D
 		return nil, err
 	}
 
+	if err := runInitScripts(ctx, setup.agents, cfg.AgentID.String(), cfg.WorkDir); err != nil {
+		_ = setup.gatewayConn.Close()
+		return nil, err
+	}
+
 	tracingProxy, err := tracingproxy.Start(ctx, tracingproxy.Config{
 		TracingAddress: cfg.TracingAddress,
 		ThreadID:       cfg.ThreadID,
+		WorkloadID:     cfg.WorkloadID,
 	})
 	if err != nil {
 		_ = setup.gatewayConn.Close()

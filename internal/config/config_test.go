@@ -9,14 +9,17 @@ import (
 )
 
 const (
-	validAgentID  = "550e8400-e29b-41d4-a716-446655440000"
-	validThreadID = "3f7fd7e3-5c6c-4a1e-8f4e-69c0030d3ed7"
+	validAgentID    = "550e8400-e29b-41d4-a716-446655440000"
+	validThreadID   = "3f7fd7e3-5c6c-4a1e-8f4e-69c0030d3ed7"
+	validWorkloadID = "7e5dc613-7822-4f48-9f55-6ce6d72a0a2e"
 )
 
 func setRequiredEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("AGENT_ID", validAgentID)
 	t.Setenv("THREAD_ID", validThreadID)
+	t.Setenv("WORKLOAD_ID", validWorkloadID)
+	t.Setenv("MCP_PORT", "")
 }
 
 func writeAgentConfig(t *testing.T, sdk, bin string) string {
@@ -61,6 +64,9 @@ func TestFromEnvValid(t *testing.T) {
 	if cfg.ThreadID != "9d06fe19-695b-48ac-83ba-2cd82472f7c8" {
 		t.Fatalf("unexpected thread id: %s", cfg.ThreadID)
 	}
+	if cfg.WorkloadID != validWorkloadID {
+		t.Fatalf("unexpected workload id: %s", cfg.WorkloadID)
+	}
 	if cfg.LLMBaseURL != "https://llm.example" {
 		t.Fatalf("unexpected LLM base URL: %s", cfg.LLMBaseURL)
 	}
@@ -75,6 +81,9 @@ func TestFromEnvValid(t *testing.T) {
 	}
 	if cfg.WorkDir != "/tmp/workdir" {
 		t.Fatalf("unexpected work dir: %s", cfg.WorkDir)
+	}
+	if cfg.MCPPort != nil {
+		t.Fatalf("expected no MCP port, got %v", *cfg.MCPPort)
 	}
 }
 
@@ -100,6 +109,7 @@ func TestFromEnvMissingRequired(t *testing.T) {
 	}{
 		{name: "agent-id", missing: "AGENT_ID", expected: "AGENT_ID"},
 		{name: "thread-id", missing: "THREAD_ID", expected: "THREAD_ID"},
+		{name: "workload-id", missing: "WORKLOAD_ID", expected: "WORKLOAD_ID"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -187,6 +197,48 @@ func TestFromEnvThreadID(t *testing.T) {
 	}
 }
 
+func TestFromEnvWorkloadID(t *testing.T) {
+	setRequiredEnv(t)
+	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	t.Setenv("WORKLOAD_ID", "  94F0F199-7F3A-4B7C-9B2E-9E8C4200BA87 ")
+
+	cfg, err := fromEnv(configPath)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.WorkloadID != "94f0f199-7f3a-4b7c-9b2e-9e8c4200ba87" {
+		t.Fatalf("unexpected workload id: %q", cfg.WorkloadID)
+	}
+}
+
+func TestFromEnvWorkloadIDEmpty(t *testing.T) {
+	setRequiredEnv(t)
+	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	t.Setenv("WORKLOAD_ID", "")
+
+	_, err := fromEnv(configPath)
+	if err == nil {
+		t.Fatal("expected error for missing WORKLOAD_ID")
+	}
+	if !strings.Contains(err.Error(), "WORKLOAD_ID") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestFromEnvWorkloadIDInvalid(t *testing.T) {
+	setRequiredEnv(t)
+	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	t.Setenv("WORKLOAD_ID", "not-a-uuid")
+
+	_, err := fromEnv(configPath)
+	if err == nil {
+		t.Fatal("expected error for invalid WORKLOAD_ID")
+	}
+	if !strings.Contains(err.Error(), "WORKLOAD_ID") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestFromEnvThreadIDEmpty(t *testing.T) {
 	setRequiredEnv(t)
 	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
@@ -240,6 +292,21 @@ func TestFromEnvMCPServersEmpty(t *testing.T) {
 	}
 	if cfg.MCPServers != nil {
 		t.Fatalf("expected nil MCP servers, got %#v", cfg.MCPServers)
+	}
+}
+
+func TestFromEnvMCPPort(t *testing.T) {
+	setRequiredEnv(t)
+	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	t.Setenv("AGENT_MCP_SERVERS", "")
+	t.Setenv("MCP_PORT", "8123")
+
+	cfg, err := fromEnv(configPath)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.MCPPort == nil || *cfg.MCPPort != 8123 {
+		t.Fatalf("unexpected MCP port: %#v", cfg.MCPPort)
 	}
 }
 
@@ -308,6 +375,20 @@ func TestFromEnvMCPServersMalformed(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 		})
+	}
+}
+
+func TestFromEnvMCPPortInvalid(t *testing.T) {
+	setRequiredEnv(t)
+	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	t.Setenv("MCP_PORT", "70000")
+
+	_, err := fromEnv(configPath)
+	if err == nil {
+		t.Fatal("expected error for invalid MCP_PORT")
+	}
+	if !strings.Contains(err.Error(), "MCP_PORT") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

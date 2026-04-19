@@ -16,7 +16,7 @@ const agnConfigTemplate = `llm:
   model: %s
 `
 
-func writeAgnConfig(llmBaseURL, apiKey, model string, summarization *summarizationConfig, mcpServers []config.MCPServer) (string, string, error) {
+func writeAgnConfig(llmBaseURL, apiKey, model, systemPrompt string, summarization *summarizationConfig, mcpServers []config.MCPServer) (string, string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", "", fmt.Errorf("resolve home directory: %w", err)
@@ -26,16 +26,17 @@ func writeAgnConfig(llmBaseURL, apiKey, model string, summarization *summarizati
 		return "", "", fmt.Errorf("create agn config dir: %w", err)
 	}
 	configPath := filepath.Join(agnDir, "config.yaml")
-	payload := agnConfig(llmBaseURL, apiKey, model, summarization, mcpServers)
+	payload := agnConfig(llmBaseURL, apiKey, model, systemPrompt, summarization, mcpServers)
 	if err := os.WriteFile(configPath, []byte(payload), 0o600); err != nil {
 		return "", "", fmt.Errorf("write agn config: %w", err)
 	}
 	return agnDir, configPath, nil
 }
 
-func agnConfig(llmBaseURL, apiKey, model string, summarization *summarizationConfig, mcpServers []config.MCPServer) string {
+func agnConfig(llmBaseURL, apiKey, model, systemPrompt string, summarization *summarizationConfig, mcpServers []config.MCPServer) string {
 	payload := fmt.Sprintf(agnConfigTemplate, llmBaseURL, apiKey, model)
-	if summarization == nil && len(mcpServers) == 0 {
+	cleanPrompt := strings.TrimSpace(systemPrompt)
+	if summarization == nil && len(mcpServers) == 0 && cleanPrompt == "" {
 		return payload
 	}
 	var builder strings.Builder
@@ -49,6 +50,9 @@ func agnConfig(llmBaseURL, apiKey, model string, summarization *summarizationCon
 			url := fmt.Sprintf("http://localhost:%d/mcp", server.Port)
 			fmt.Fprintf(&builder, "    %s:\n      url: %s\n", server.Name, url)
 		}
+	}
+	if cleanPrompt != "" {
+		appendSystemPrompt(&builder, cleanPrompt)
 	}
 	return builder.String()
 }
@@ -74,4 +78,11 @@ func appendSummarizationConfig(builder *strings.Builder, summarization *summariz
 		fmt.Fprintf(builder, "      api_key_env: %s\n", summarization.LLM.Auth.APIKeyEnv)
 	}
 	fmt.Fprintf(builder, "    model: %s\n", summarization.LLM.Model)
+}
+
+func appendSystemPrompt(builder *strings.Builder, prompt string) {
+	builder.WriteString("system_prompt: |\n")
+	for _, line := range strings.Split(prompt, "\n") {
+		fmt.Fprintf(builder, "  %s\n", line)
+	}
 }

@@ -18,22 +18,25 @@ import (
 )
 
 const (
-	ListenAddress        = "localhost:4317"
-	threadIDAttributeKey = "agyn.thread.id"
+	ListenAddress          = "localhost:4317"
+	threadIDAttributeKey   = "agyn.thread.id"
+	workloadIDAttributeKey = "agyn.workload.id"
 )
 
 type Config struct {
 	TracingAddress string
 	ThreadID       string
+	WorkloadID     string
 }
 
 type Proxy struct {
 	collectortracev1.UnimplementedTraceServiceServer
 
-	server   *grpc.Server
-	upstream collectortracev1.TraceServiceClient
-	conn     *grpc.ClientConn
-	threadID string
+	server     *grpc.Server
+	upstream   collectortracev1.TraceServiceClient
+	conn       *grpc.ClientConn
+	threadID   string
+	workloadID string
 }
 
 func Start(ctx context.Context, cfg Config) (*Proxy, error) {
@@ -46,10 +49,11 @@ func Start(ctx context.Context, cfg Config) (*Proxy, error) {
 	}
 	server := grpc.NewServer()
 	proxy := &Proxy{
-		server:   server,
-		upstream: collectortracev1.NewTraceServiceClient(conn),
-		conn:     conn,
-		threadID: cfg.ThreadID,
+		server:     server,
+		upstream:   collectortracev1.NewTraceServiceClient(conn),
+		conn:       conn,
+		threadID:   cfg.ThreadID,
+		workloadID: cfg.WorkloadID,
 	}
 	collectortracev1.RegisterTraceServiceServer(server, proxy)
 
@@ -74,6 +78,9 @@ func (p *Proxy) Export(ctx context.Context, req *collectortracev1.ExportTraceSer
 	}
 	if p.threadID != "" {
 		injectThreadID(req, p.threadID)
+	}
+	if p.workloadID != "" {
+		injectWorkloadID(req, p.workloadID)
 	}
 	return p.upstream.Export(ctx, req)
 }
@@ -102,22 +109,36 @@ func injectThreadID(req *collectortracev1.ExportTraceServiceRequest, threadID st
 			resource = &resourcev1.Resource{}
 			spans.Resource = resource
 		}
-		upsertThreadID(resource, threadID)
+		upsertAttribute(resource, threadIDAttributeKey, threadID)
 	}
 }
 
-func upsertThreadID(resource *resourcev1.Resource, threadID string) {
-	value := &commonv1.AnyValue{
-		Value: &commonv1.AnyValue_StringValue{StringValue: threadID},
+func injectWorkloadID(req *collectortracev1.ExportTraceServiceRequest, workloadID string) {
+	for _, spans := range req.ResourceSpans {
+		if spans == nil {
+			continue
+		}
+		resource := spans.Resource
+		if resource == nil {
+			resource = &resourcev1.Resource{}
+			spans.Resource = resource
+		}
+		upsertAttribute(resource, workloadIDAttributeKey, workloadID)
+	}
+}
+
+func upsertAttribute(resource *resourcev1.Resource, key, value string) {
+	attributeValue := &commonv1.AnyValue{
+		Value: &commonv1.AnyValue_StringValue{StringValue: value},
 	}
 	for _, attribute := range resource.Attributes {
-		if attribute != nil && attribute.Key == threadIDAttributeKey {
-			attribute.Value = value
+		if attribute != nil && attribute.Key == key {
+			attribute.Value = attributeValue
 			return
 		}
 	}
 	resource.Attributes = append(resource.Attributes, &commonv1.KeyValue{
-		Key:   threadIDAttributeKey,
-		Value: value,
+		Key:   key,
+		Value: attributeValue,
 	})
 }
