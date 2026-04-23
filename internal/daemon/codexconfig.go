@@ -21,11 +21,7 @@ wire_api = "responses"
 `
 
 func writeCodexConfig(llmBaseURL string, mcpServers []config.MCPServer) (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve home directory: %w", err)
-	}
-	codexHome := filepath.Join(home, ".codex")
+	codexHome := filepath.Join(codexHomeEnv(), ".codex")
 	if err := os.MkdirAll(codexHome, 0o700); err != nil {
 		return "", fmt.Errorf("create codex home dir: %w", err)
 	}

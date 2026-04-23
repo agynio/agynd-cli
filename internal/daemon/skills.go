@@ -124,16 +124,17 @@ func writeSkills(sdk string, skills []skill) (string, error) {
 }
 
 func skillsDirForSDK(sdk string) (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve home directory: %w", err)
-	}
 	switch sdk {
 	case SDKCodex:
-		return filepath.Join(home, ".codex", "skills"), nil
-	case SDKAgn:
-		return filepath.Join(home, ".agyn", "agn", "skills"), nil
-	case SDKClaude:
+		return filepath.Join(codexHomeEnv(), ".codex", "skills"), nil
+	case SDKAgn, SDKClaude:
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve home directory: %w", err)
+		}
+		if sdk == SDKAgn {
+			return filepath.Join(home, ".agyn", "agn", "skills"), nil
+		}
 		return filepath.Join(home, ".claude", "skills"), nil
 	default:
 		return "", fmt.Errorf("unknown sdk %q", sdk)
