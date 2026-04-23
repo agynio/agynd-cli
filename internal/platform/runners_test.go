@@ -8,6 +8,7 @@ import (
 	"time"
 
 	gatewayv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/gateway/v1"
+	runnerv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/runner/v1"
 	runnersv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/runners/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -70,6 +71,22 @@ func (f *fakeRunnersGatewayClient) TouchWorkload(ctx context.Context, in *runner
 		return nil, f.touchErr
 	}
 	return &runnersv1.TouchWorkloadResponse{}, nil
+}
+
+func (f *fakeRunnersGatewayClient) StreamWorkloadLogs(ctx context.Context, in *runnerv1.StreamWorkloadLogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[runnerv1.StreamWorkloadLogsResponse], error) {
+	return nil, fmt.Errorf("StreamWorkloadLogs not implemented")
+}
+
+func (f *fakeRunnersGatewayClient) GetVolume(ctx context.Context, in *runnersv1.GetVolumeRequest, opts ...grpc.CallOption) (*runnersv1.GetVolumeResponse, error) {
+	return nil, fmt.Errorf("GetVolume not implemented")
+}
+
+func (f *fakeRunnersGatewayClient) ListVolumes(ctx context.Context, in *runnersv1.ListVolumesRequest, opts ...grpc.CallOption) (*runnersv1.ListVolumesResponse, error) {
+	return nil, fmt.Errorf("ListVolumes not implemented")
+}
+
+func (f *fakeRunnersGatewayClient) ListVolumesByThread(ctx context.Context, in *runnersv1.ListVolumesByThreadRequest, opts ...grpc.CallOption) (*runnersv1.ListVolumesByThreadResponse, error) {
+	return nil, fmt.Errorf("ListVolumesByThread not implemented")
 }
 
 func TestWorkloadFromProtoValid(t *testing.T) {

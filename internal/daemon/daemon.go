@@ -258,12 +258,14 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 		return nil, err
 	}
 	otlpEndpoint := "http://" + tracingproxy.ListenAddress
+	codexHomeValue := codexHomeEnv()
 	options := []codex.Option{
 		codex.WithBinary(cfg.AgentBinary),
 		codex.WithWorkDir(cfg.WorkDir),
 		codex.WithEnv(map[string]string{
 			"PATH":                        agentPathValue(),
 			"CODEX_HOME":                  codexHome,
+			"HOME":                        codexHomeValue,
 			"OPENAI_API_KEY":              cfg.LLMAPIToken,
 			"OTEL_EXPORTER_OTLP_ENDPOINT": otlpEndpoint,
 		}),

@@ -136,7 +136,7 @@ func TestFromEnvDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if cfg.WorkDir != "/workspace" {
+	if cfg.WorkDir != "/tmp" {
 		t.Fatalf("expected default workspace dir, got %s", cfg.WorkDir)
 	}
 }

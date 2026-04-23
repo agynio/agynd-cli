@@ -20,3 +20,17 @@ func TestPrependCLIPathExisting(t *testing.T) {
 		t.Fatalf("expected %q, got %q", expected, got)
 	}
 }
+
+func TestCodexHomeEnvDefault(t *testing.T) {
+	t.Setenv("HOME", "")
+	if got := codexHomeEnv(); got != codexDefaultHome {
+		t.Fatalf("expected %q, got %q", codexDefaultHome, got)
+	}
+}
+
+func TestCodexHomeEnvUsesHome(t *testing.T) {
+	t.Setenv("HOME", "/custom/home")
+	if got := codexHomeEnv(); got != "/custom/home" {
+		t.Fatalf("expected /custom/home, got %q", got)
+	}
+}

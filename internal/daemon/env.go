@@ -1,8 +1,14 @@
 package daemon
 
-import "os"
+import (
+	"os"
+	"strings"
+)
 
-const cliPathPrefix = "/agyn-bin/cli"
+const (
+	cliPathPrefix     = "/agyn-bin/cli"
+	codexDefaultHome  = "/tmp"
+)
 
 func prependCLIPath(pathValue string) string {
 	if pathValue == "" {
@@ -13,4 +19,12 @@ func prependCLIPath(pathValue string) string {
 
 func agentPathValue() string {
 	return prependCLIPath(os.Getenv("PATH"))
+}
+
+func codexHomeEnv() string {
+	home := strings.TrimSpace(os.Getenv("HOME"))
+	if home == "" {
+		return codexDefaultHome
+	}
+	return home
 }
