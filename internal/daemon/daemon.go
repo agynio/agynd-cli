@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -241,12 +240,8 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		_ = setup.gatewayConn.Close()
-		return nil, fmt.Errorf("resolve home directory: %w", err)
-	}
-	mappingStore := codexbridge.NewThreadMappingStore(homeDir)
+	codexHomeValue := codexHomeEnv()
+	mappingStore := codexbridge.NewThreadMappingStore(codexHomeValue)
 
 	tracingProxy, err := tracingproxy.Start(ctx, tracingproxy.Config{
 		TracingAddress: cfg.TracingAddress,
@@ -264,6 +259,7 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 		codex.WithEnv(map[string]string{
 			"PATH":                        agentPathValue(),
 			"CODEX_HOME":                  codexHome,
+			"HOME":                        codexHomeValue,
 			"OPENAI_API_KEY":              cfg.LLMAPIToken,
 			"OTEL_EXPORTER_OTLP_ENDPOINT": otlpEndpoint,
 		}),

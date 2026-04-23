@@ -51,7 +51,7 @@ func buildAgn(t *testing.T) string {
 	return agnBinaryPath
 }
 
-func writeAgnTestConfig(t *testing.T, model string) string {
+func writeAgnTestConfig(t *testing.T, model string, tokenCountingAddress string) string {
 	t.Helper()
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")
@@ -60,7 +60,9 @@ func writeAgnTestConfig(t *testing.T, model string) string {
   auth:
     api_key: dummy
   model: %s
-`, agnTestLLMEndpoint, model)
+token_counting:
+  address: %q
+`, agnTestLLMEndpoint, model, tokenCountingAddress)
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatalf("write agn config: %v", err)
 	}
@@ -69,7 +71,8 @@ func writeAgnTestConfig(t *testing.T, model string) string {
 
 func TestAgnClientHelloResponse(t *testing.T) {
 	binary := buildAgn(t)
-	configPath := writeAgnTestConfig(t, "simple-hello")
+	tokenCountingAddr := startTokenCountingServer(t)
+	configPath := writeAgnTestConfig(t, "simple-hello", tokenCountingAddr)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

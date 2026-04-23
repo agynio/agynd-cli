@@ -103,7 +103,7 @@ func fromEnv(configPath string) (Config, error) {
 
 	workDir := strings.TrimSpace(os.Getenv("WORKSPACE_DIR"))
 	if workDir == "" {
-		workDir = "/workspace"
+		workDir = "/tmp"
 	}
 
 	return Config{
