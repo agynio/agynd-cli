@@ -96,7 +96,7 @@ func appendSummarizationConfig(builder *strings.Builder, summarization *summariz
 }
 
 func appendSystemPrompt(builder *strings.Builder, prompt string) {
-	builder.WriteString("system_prompt: |\n")
+	builder.WriteString("system_prompt: |-\n")
 	for _, line := range strings.Split(prompt, "\n") {
 		fmt.Fprintf(builder, "  %s\n", line)
 	}

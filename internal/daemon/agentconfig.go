@@ -24,6 +24,7 @@ type summarizationAuthConfig struct {
 }
 
 type agentConfigurationPayload struct {
+	SystemPrompt  *string               `json:"system_prompt"`
 	Summarization *summarizationPayload `json:"summarization"`
 }
 
@@ -45,17 +46,43 @@ type summarizationAuthPayload struct {
 }
 
 func parseAgentSummarization(raw string) (*summarizationConfig, error) {
+	cfg, err := parseAgentConfiguration(raw)
+	if err != nil {
+		return nil, err
+	}
+	return cfg.Summarization, nil
+}
+
+type agentConfiguration struct {
+	SystemPrompt  string
+	Summarization *summarizationConfig
+}
+
+func parseAgentConfiguration(raw string) (agentConfiguration, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return nil, nil
+		return agentConfiguration{}, nil
 	}
 
 	var payload agentConfigurationPayload
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-		return nil, fmt.Errorf("parse agent configuration: %w", err)
+		return agentConfiguration{}, fmt.Errorf("parse agent configuration: %w", err)
 	}
 
-	return normalizeSummarizationPayload(payload.Summarization)
+	summarization, err := normalizeSummarizationPayload(payload.Summarization)
+	if err != nil {
+		return agentConfiguration{}, err
+	}
+
+	systemPrompt := ""
+	if payload.SystemPrompt != nil {
+		systemPrompt = strings.TrimSpace(*payload.SystemPrompt)
+	}
+
+	return agentConfiguration{
+		SystemPrompt:  systemPrompt,
+		Summarization: summarization,
+	}, nil
 }
 
 func normalizeSummarizationPayload(payload *summarizationPayload) (*summarizationConfig, error) {
