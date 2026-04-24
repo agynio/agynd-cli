@@ -27,19 +27,19 @@ func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daem
 		return nil, err
 	}
 
-	summarization, err := parseAgentSummarization(setup.agent.GetConfiguration())
+	agentConfig, err := parseAgentConfiguration(setup.agent.GetConfiguration())
 	if err != nil {
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}
-	systemPrompt := buildSystemPrompt(setup.agent.GetRole(), setup.skills)
+	systemPrompt := buildSystemPrompt(agentConfig.SystemPrompt, setup.skills)
 
 	_, configPath, err := writeAgnConfig(
 		cfg.LLMBaseURL,
 		cfg.LLMAPIToken,
 		setup.agent.GetModel(),
 		systemPrompt,
-		summarization,
+		agentConfig.Summarization,
 		cfg.MCPServers,
 	)
 	if err != nil {

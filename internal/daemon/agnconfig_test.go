@@ -270,7 +270,7 @@ func TestWriteAgnConfigWithSystemPrompt(t *testing.T) {
 	}
 
 	expected := fmt.Sprintf(agnConfigTemplate, baseURL, apiKey, model, testTokenCountingAddress) +
-		"system_prompt: |\n" +
+		"system_prompt: |-\n" +
 		"  You are a helpful agent.\n" +
 		"  Follow the guidelines.\n"
 	if string(content) != expected {

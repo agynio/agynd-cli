@@ -71,6 +71,21 @@ func TestParseAgentSummarizationNoBlock(t *testing.T) {
 	}
 }
 
+func TestParseAgentConfigurationSystemPrompt(t *testing.T) {
+	payload := `{"system_prompt":"  hello there  "}`
+
+	cfg, err := parseAgentConfiguration(payload)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.SystemPrompt != "hello there" {
+		t.Fatalf("unexpected system prompt %q", cfg.SystemPrompt)
+	}
+	if cfg.Summarization != nil {
+		t.Fatalf("expected nil summarization, got %#v", cfg.Summarization)
+	}
+}
+
 func TestParseAgentSummarizationInvalidJSON(t *testing.T) {
 	_, err := parseAgentSummarization("{")
 	if err == nil {

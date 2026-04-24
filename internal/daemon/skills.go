@@ -154,14 +154,14 @@ func validateSkillName(name string) error {
 	return nil
 }
 
-func buildSystemPrompt(role string, skills []skill) string {
-	role = strings.TrimSpace(role)
-	if role == "" && len(skills) == 0 {
+func buildSystemPrompt(systemPrompt string, skills []skill) string {
+	systemPrompt = strings.TrimSpace(systemPrompt)
+	if systemPrompt == "" && len(skills) == 0 {
 		return ""
 	}
 	parts := make([]string, 0, len(skills)+1)
-	if role != "" {
-		parts = append(parts, role)
+	if systemPrompt != "" {
+		parts = append(parts, systemPrompt)
 	}
 	for _, entry := range skills {
 		body := strings.TrimSpace(entry.Body)
