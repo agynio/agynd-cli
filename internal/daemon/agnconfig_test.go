@@ -11,6 +11,7 @@ import (
 
 const (
 	testAgnAPIAddress         = "api.platform.svc.cluster.local:443"
+	testAgnAPIAddressURL      = "https://api.platform.svc.cluster.local:443/v1"
 	testTokenCountingAddress  = "token-counting.platform.svc.cluster.local:50051"
 	testTokenCountingOverride = "token-counting.custom.svc.cluster.local:50052"
 )
@@ -286,6 +287,32 @@ func TestResolveTokenCountingAddressFromAPIAddress(t *testing.T) {
 	}
 	if address != testTokenCountingAddress {
 		t.Fatalf("expected address %q, got %q", testTokenCountingAddress, address)
+	}
+}
+
+func TestResolveTokenCountingAddressFromAPIAddressURL(t *testing.T) {
+	t.Setenv(agynAPIAddressEnvVar, testAgnAPIAddressURL)
+
+	address, err := resolveTokenCountingAddress()
+	if err != nil {
+		t.Fatalf("expected address, got %v", err)
+	}
+	if address != testTokenCountingAddress {
+		t.Fatalf("expected address %q, got %q", testTokenCountingAddress, address)
+	}
+}
+
+func TestResolveTokenCountingAddressDefault(t *testing.T) {
+	t.Setenv(agynAPIAddressEnvVar, "")
+	t.Setenv(agnTokenCountingAddressEnvVar, "")
+
+	address, err := resolveTokenCountingAddress()
+	if err != nil {
+		t.Fatalf("expected address, got %v", err)
+	}
+	expected := fmt.Sprintf("%s:%d", tokenCountingServiceName, tokenCountingServicePort)
+	if address != expected {
+		t.Fatalf("expected address %q, got %q", expected, address)
 	}
 }
 

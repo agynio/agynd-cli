@@ -14,7 +14,6 @@ import (
 const (
 	agynAPIAddressEnvVar          = "AGYN_API_ADDRESS"
 	agnTokenCountingAddressEnvVar = "AGN_TOKEN_COUNTING_ADDRESS"
-	tokenCountingDefaultAddress   = "token-counting:50051"
 	tokenCountingServiceName      = "token-counting"
 	tokenCountingServicePort      = 50051
 )
@@ -35,7 +34,7 @@ func writeAgnConfig(llmBaseURL, apiKey, model, systemPrompt string, summarizatio
 	}
 	tokenCountingAddress, err := resolveTokenCountingAddress()
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("resolve token counting address: %w", err)
 	}
 	agnDir := filepath.Join(home, ".agyn", "agn")
 	if err := os.MkdirAll(agnDir, 0o700); err != nil {
@@ -110,7 +109,7 @@ func resolveTokenCountingAddress() (string, error) {
 	}
 	apiAddress := strings.TrimSpace(os.Getenv(agynAPIAddressEnvVar))
 	if apiAddress == "" {
-		return tokenCountingDefaultAddress, nil
+		return fmt.Sprintf("%s:%d", tokenCountingServiceName, tokenCountingServicePort), nil
 	}
 	host, err := apiHost(apiAddress)
 	if err != nil {
