@@ -9,9 +9,21 @@ import (
 	"github.com/agynio/agynd-cli/internal/config"
 )
 
+const (
+	testAgnAPIAddress         = "api.platform.svc.cluster.local:443"
+	testTokenCountingAddress  = "token-counting.platform.svc.cluster.local:50051"
+	testTokenCountingOverride = "token-counting.custom.svc.cluster.local:50052"
+)
+
+func setAgnAPIAddress(t *testing.T) {
+	t.Helper()
+	t.Setenv(agynAPIAddressEnvVar, testAgnAPIAddress)
+}
+
 func TestWriteAgnConfig(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
+	setAgnAPIAddress(t)
 
 	baseURL := "https://example.com"
 	apiKey := "test-api-key"
@@ -36,7 +48,7 @@ func TestWriteAgnConfig(t *testing.T) {
 		t.Fatalf("expected config to be readable, got %v", err)
 	}
 
-	expected := fmt.Sprintf(agnConfigTemplate, baseURL, apiKey, model)
+	expected := fmt.Sprintf(agnConfigTemplate, baseURL, apiKey, model, testTokenCountingAddress)
 	if string(content) != expected {
 		t.Fatalf("expected config %q, got %q", expected, string(content))
 	}
@@ -56,8 +68,8 @@ func TestAgnConfigNoSummarizationInJSON(t *testing.T) {
 		t.Fatalf("expected nil summarization, got %#v", summarization)
 	}
 
-	content := agnConfig(baseURL, apiKey, model, "", summarization, nil)
-	expected := fmt.Sprintf(agnConfigTemplate, baseURL, apiKey, model)
+	content := agnConfig(baseURL, apiKey, model, testTokenCountingAddress, "", summarization, nil)
+	expected := fmt.Sprintf(agnConfigTemplate, baseURL, apiKey, model, testTokenCountingAddress)
 	if content != expected {
 		t.Fatalf("expected config %q, got %q", expected, content)
 	}
@@ -66,6 +78,7 @@ func TestAgnConfigNoSummarizationInJSON(t *testing.T) {
 func TestWriteAgnConfigWithMCPServers(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
+	setAgnAPIAddress(t)
 
 	baseURL := "https://example.com"
 	apiKey := "test-api-key"
@@ -94,7 +107,7 @@ func TestWriteAgnConfigWithMCPServers(t *testing.T) {
 		t.Fatalf("expected config to be readable, got %v", err)
 	}
 
-	expected := fmt.Sprintf(agnConfigTemplate, baseURL, apiKey, model) +
+	expected := fmt.Sprintf(agnConfigTemplate, baseURL, apiKey, model, testTokenCountingAddress) +
 		"mcp:\n  servers:\n" +
 		"    memory:\n      url: http://localhost:8100/mcp\n" +
 		"    filesystem:\n      url: http://localhost:8200/mcp\n"
@@ -106,6 +119,7 @@ func TestWriteAgnConfigWithMCPServers(t *testing.T) {
 func TestWriteAgnConfigWithSummarizationThresholds(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
+	setAgnAPIAddress(t)
 
 	baseURL := "https://example.com"
 	apiKey := "test-api-key"
@@ -126,7 +140,7 @@ func TestWriteAgnConfigWithSummarizationThresholds(t *testing.T) {
 		t.Fatalf("expected config to be readable, got %v", err)
 	}
 
-	expected := fmt.Sprintf(agnConfigTemplate, baseURL, apiKey, model) +
+	expected := fmt.Sprintf(agnConfigTemplate, baseURL, apiKey, model, testTokenCountingAddress) +
 		"summarization:\n" +
 		"  keep_tokens: 10\n" +
 		"  max_tokens: 200\n"
@@ -138,6 +152,7 @@ func TestWriteAgnConfigWithSummarizationThresholds(t *testing.T) {
 func TestWriteAgnConfigWithSummarizationLLMAPIKey(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
+	setAgnAPIAddress(t)
 
 	baseURL := "https://example.com"
 	apiKey := "test-api-key"
@@ -175,7 +190,7 @@ func TestWriteAgnConfigWithSummarizationLLMAPIKey(t *testing.T) {
 		t.Fatalf("expected config to be readable, got %v", err)
 	}
 
-	expected := fmt.Sprintf(agnConfigTemplate, baseURL, apiKey, model) +
+	expected := fmt.Sprintf(agnConfigTemplate, baseURL, apiKey, model, testTokenCountingAddress) +
 		"summarization:\n" +
 		"  keep_tokens: 10\n" +
 		"  max_tokens: 200\n" +
@@ -192,6 +207,7 @@ func TestWriteAgnConfigWithSummarizationLLMAPIKey(t *testing.T) {
 func TestWriteAgnConfigWithSummarizationLLMAPIKeyEnv(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
+	setAgnAPIAddress(t)
 
 	baseURL := "https://example.com"
 	apiKey := "test-api-key"
@@ -219,7 +235,7 @@ func TestWriteAgnConfigWithSummarizationLLMAPIKeyEnv(t *testing.T) {
 		t.Fatalf("expected config to be readable, got %v", err)
 	}
 
-	expected := fmt.Sprintf(agnConfigTemplate, baseURL, apiKey, model) +
+	expected := fmt.Sprintf(agnConfigTemplate, baseURL, apiKey, model, testTokenCountingAddress) +
 		"summarization:\n" +
 		"  keep_tokens: 10\n" +
 		"  max_tokens: 200\n" +
@@ -236,6 +252,7 @@ func TestWriteAgnConfigWithSummarizationLLMAPIKeyEnv(t *testing.T) {
 func TestWriteAgnConfigWithSystemPrompt(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
+	setAgnAPIAddress(t)
 
 	baseURL := "https://example.com"
 	apiKey := "test-api-key"
@@ -251,11 +268,36 @@ func TestWriteAgnConfigWithSystemPrompt(t *testing.T) {
 		t.Fatalf("expected config to be readable, got %v", err)
 	}
 
-	expected := fmt.Sprintf(agnConfigTemplate, baseURL, apiKey, model) +
+	expected := fmt.Sprintf(agnConfigTemplate, baseURL, apiKey, model, testTokenCountingAddress) +
 		"system_prompt: |\n" +
 		"  You are a helpful agent.\n" +
 		"  Follow the guidelines.\n"
 	if string(content) != expected {
 		t.Fatalf("expected config %q, got %q", expected, string(content))
+	}
+}
+
+func TestResolveTokenCountingAddressFromAPIAddress(t *testing.T) {
+	setAgnAPIAddress(t)
+
+	address, err := resolveTokenCountingAddress()
+	if err != nil {
+		t.Fatalf("expected address, got %v", err)
+	}
+	if address != testTokenCountingAddress {
+		t.Fatalf("expected address %q, got %q", testTokenCountingAddress, address)
+	}
+}
+
+func TestResolveTokenCountingAddressOverride(t *testing.T) {
+	setAgnAPIAddress(t)
+	t.Setenv(agnTokenCountingAddressEnvVar, testTokenCountingOverride)
+
+	address, err := resolveTokenCountingAddress()
+	if err != nil {
+		t.Fatalf("expected address, got %v", err)
+	}
+	if address != testTokenCountingOverride {
+		t.Fatalf("expected address %q, got %q", testTokenCountingOverride, address)
 	}
 }
