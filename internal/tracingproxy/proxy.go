@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"sync"
 	"time"
 
 	collectortracev1 "go.opentelemetry.io/proto/otlp/collector/trace/v1"
@@ -20,6 +21,7 @@ import (
 const (
 	ListenAddress          = "localhost:4317"
 	threadIDAttributeKey   = "agyn.thread.id"
+	messageIDAttributeKey  = "agyn.thread.message.id"
 	workloadIDAttributeKey = "agyn.workload.id"
 )
 
@@ -37,6 +39,8 @@ type Proxy struct {
 	conn       *grpc.ClientConn
 	threadID   string
 	workloadID string
+	messageMu  sync.RWMutex
+	messageID  string
 }
 
 func Start(ctx context.Context, cfg Config) (*Proxy, error) {
@@ -82,7 +86,28 @@ func (p *Proxy) Export(ctx context.Context, req *collectortracev1.ExportTraceSer
 	if p.workloadID != "" {
 		injectWorkloadID(req, p.workloadID)
 	}
+	if messageID := p.messageIDValue(); messageID != "" {
+		injectMessageID(req, messageID)
+	}
 	return p.upstream.Export(ctx, req)
+}
+
+func (p *Proxy) SetMessageID(messageID string) {
+	p.messageMu.Lock()
+	p.messageID = messageID
+	p.messageMu.Unlock()
+}
+
+func (p *Proxy) ClearMessageID() {
+	p.messageMu.Lock()
+	p.messageID = ""
+	p.messageMu.Unlock()
+}
+
+func (p *Proxy) messageIDValue() string {
+	p.messageMu.RLock()
+	defer p.messageMu.RUnlock()
+	return p.messageID
 }
 
 func (p *Proxy) Close() {
@@ -124,6 +149,20 @@ func injectWorkloadID(req *collectortracev1.ExportTraceServiceRequest, workloadI
 			spans.Resource = resource
 		}
 		upsertAttribute(resource, workloadIDAttributeKey, workloadID)
+	}
+}
+
+func injectMessageID(req *collectortracev1.ExportTraceServiceRequest, messageID string) {
+	for _, spans := range req.ResourceSpans {
+		if spans == nil {
+			continue
+		}
+		resource := spans.Resource
+		if resource == nil {
+			resource = &resourcev1.Resource{}
+			spans.Resource = resource
+		}
+		upsertAttribute(resource, messageIDAttributeKey, messageID)
 	}
 }
 
