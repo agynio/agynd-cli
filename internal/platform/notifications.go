@@ -24,7 +24,8 @@ func (n *Notifications) Subscribe(ctx context.Context, agentID string) (Subscrib
 	if agentID == "" {
 		return nil, fmt.Errorf("agent id is required")
 	}
-	// NOTE: SubscribeRequest currently has no rooms field; server-side filtering
-	// must ensure the agent only receives thread_participant:{agentID} events.
-	return n.client.Subscribe(ctx, &notificationsv1.SubscribeRequest{})
+	request := &notificationsv1.SubscribeRequest{
+		Rooms: []string{fmt.Sprintf("thread_participant:%s", agentID)},
+	}
+	return n.client.Subscribe(ctx, request)
 }
