@@ -78,6 +78,33 @@ func TestInjectWorkloadID(t *testing.T) {
 	}
 }
 
+func TestInjectMessageID(t *testing.T) {
+	req := &collectortracev1.ExportTraceServiceRequest{
+		ResourceSpans: []*tracev1.ResourceSpans{
+			{
+				Resource: &resourcev1.Resource{
+					Attributes: []*commonv1.KeyValue{
+						{Key: "existing", Value: stringValue("keep")},
+					},
+				},
+			},
+		},
+	}
+
+	injectMessageID(req, "message-1")
+
+	resource := req.ResourceSpans[0].Resource
+	if value, ok := findAttribute(resource, "existing"); !ok || value.GetStringValue() != "keep" {
+		t.Fatalf("expected existing attribute preserved, got %v", value)
+	}
+	if value, ok := findAttribute(resource, messageIDAttributeKey); !ok || value.GetStringValue() != "message-1" {
+		t.Fatalf("expected message id injected, got %v", value)
+	}
+	if len(resource.Attributes) != 2 {
+		t.Fatalf("expected 2 attributes, got %d", len(resource.Attributes))
+	}
+}
+
 func TestInjectThreadIDOverwritesExisting(t *testing.T) {
 	req := &collectortracev1.ExportTraceServiceRequest{
 		ResourceSpans: []*tracev1.ResourceSpans{
@@ -150,6 +177,7 @@ func TestProxyForwardsToUpstream(t *testing.T) {
 		t.Fatalf("start proxy: %v", err)
 	}
 	defer proxy.Close()
+	proxy.SetMessageID("message-4")
 
 	conn, err := grpc.NewClient(ListenAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -178,6 +206,55 @@ func TestProxyForwardsToUpstream(t *testing.T) {
 	value, ok = findAttribute(forwarded.ResourceSpans[0].Resource, workloadIDAttributeKey)
 	if !ok || value.GetStringValue() != "workload-4" {
 		t.Fatalf("expected forwarded request to include workload id, got %v", value)
+	}
+	value, ok = findAttribute(forwarded.ResourceSpans[0].Resource, messageIDAttributeKey)
+	if !ok || value.GetStringValue() != "message-4" {
+		t.Fatalf("expected forwarded request to include message id, got %v", value)
+	}
+}
+
+func TestProxyClearsMessageID(t *testing.T) {
+	server, listener, requests := startCaptureServer(t)
+	defer server.Stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	proxy, err := Start(ctx, Config{TracingAddress: listener.Addr().String(), ThreadID: "thread-5"})
+	if err != nil {
+		t.Fatalf("start proxy: %v", err)
+	}
+	defer proxy.Close()
+
+	conn, err := grpc.NewClient(ListenAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer conn.Close()
+
+	client := collectortracev1.NewTraceServiceClient(conn)
+	proxy.SetMessageID("message-5")
+	_, err = client.Export(ctx, &collectortracev1.ExportTraceServiceRequest{
+		ResourceSpans: []*tracev1.ResourceSpans{{Resource: &resourcev1.Resource{}}},
+	})
+	if err != nil {
+		t.Fatalf("export via proxy: %v", err)
+	}
+	forwarded := awaitRequest(t, requests)
+	if value, ok := findAttribute(forwarded.ResourceSpans[0].Resource, messageIDAttributeKey); !ok || value.GetStringValue() != "message-5" {
+		t.Fatalf("expected forwarded request to include message id, got %v", value)
+	}
+
+	proxy.ClearMessageID()
+	_, err = client.Export(ctx, &collectortracev1.ExportTraceServiceRequest{
+		ResourceSpans: []*tracev1.ResourceSpans{{Resource: &resourcev1.Resource{}}},
+	})
+	if err != nil {
+		t.Fatalf("export via proxy: %v", err)
+	}
+	forwarded = awaitRequest(t, requests)
+	if _, ok := findAttribute(forwarded.ResourceSpans[0].Resource, messageIDAttributeKey); ok {
+		t.Fatal("expected message id to be cleared")
 	}
 }
 
