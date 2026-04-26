@@ -66,6 +66,10 @@ func (f *fakeThreadsClient) GetUnackedMessages(ctx context.Context, in *threadsv
 	return resp, nil
 }
 
+func (f *fakeThreadsClient) GetUnackedMessageCounts(ctx context.Context, in *threadsv1.GetUnackedMessageCountsRequest, opts ...grpc.CallOption) (*threadsv1.GetUnackedMessageCountsResponse, error) {
+	return nil, fmt.Errorf("GetUnackedMessageCounts not implemented")
+}
+
 func (f *fakeThreadsClient) AckMessages(ctx context.Context, in *threadsv1.AckMessagesRequest, opts ...grpc.CallOption) (*threadsv1.AckMessagesResponse, error) {
 	return nil, fmt.Errorf("AckMessages not implemented")
 }

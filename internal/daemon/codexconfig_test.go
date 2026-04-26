@@ -34,6 +34,11 @@ func TestWriteCodexConfig(t *testing.T) {
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
 
+[otel]
+trace_exporter = { otlp-grpc = { endpoint = "http://localhost:4317" } }
+metrics_exporter = "none"
+exporter = "none"
+
 [model_providers.platform]
 name = "Agyn LLM"
 base_url = %q
@@ -68,6 +73,11 @@ func TestWriteCodexConfigHomeFallback(t *testing.T) {
 	expected := fmt.Sprintf(`model_provider = "platform"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
+
+[otel]
+trace_exporter = { otlp-grpc = { endpoint = "http://localhost:4317" } }
+metrics_exporter = "none"
+exporter = "none"
 
 [model_providers.platform]
 name = "Agyn LLM"
@@ -108,6 +118,11 @@ func TestWriteCodexConfigWithMCPServers(t *testing.T) {
 	expected := fmt.Sprintf(`model_provider = "platform"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
+
+[otel]
+trace_exporter = { otlp-grpc = { endpoint = "http://localhost:4317" } }
+metrics_exporter = "none"
+exporter = "none"
 
 [model_providers.platform]
 name = "Agyn LLM"

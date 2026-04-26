@@ -13,6 +13,11 @@ const codexConfigTemplate = `model_provider = "platform"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
 
+[otel]
+trace_exporter = { otlp-grpc = { endpoint = "http://localhost:4317" } }
+metrics_exporter = "none"
+exporter = "none"
+
 [model_providers.platform]
 name = "Agyn LLM"
 base_url = %q
