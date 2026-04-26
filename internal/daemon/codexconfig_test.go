@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/agynio/agynd-cli/internal/config"
+	"github.com/agynio/agynd-cli/internal/tracingproxy"
 )
 
 func TestWriteCodexConfig(t *testing.T) {
@@ -14,6 +15,7 @@ func TestWriteCodexConfig(t *testing.T) {
 	t.Setenv("HOME", tmpHome)
 
 	baseURL := "https://example.com"
+	otlpEndpoint := "http://" + tracingproxy.ListenAddress
 	codexHome, err := writeCodexConfig(baseURL, nil)
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
@@ -34,12 +36,17 @@ func TestWriteCodexConfig(t *testing.T) {
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
 
+[otel]
+trace_exporter = { otlp-grpc = { endpoint = %q } }
+metrics_exporter = "none"
+exporter = "none"
+
 [model_providers.platform]
 name = "Agyn LLM"
 base_url = %q
 env_key = "OPENAI_API_KEY"
 wire_api = "responses"
-`, baseURL)
+`, otlpEndpoint, baseURL)
 	if string(content) != expected {
 		t.Fatalf("expected config %q, got %q", expected, string(content))
 	}
@@ -49,6 +56,7 @@ func TestWriteCodexConfigHomeFallback(t *testing.T) {
 	t.Setenv("HOME", "")
 
 	baseURL := "https://example.com"
+	otlpEndpoint := "http://" + tracingproxy.ListenAddress
 	codexHome, err := writeCodexConfig(baseURL, nil)
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
@@ -69,12 +77,17 @@ func TestWriteCodexConfigHomeFallback(t *testing.T) {
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
 
+[otel]
+trace_exporter = { otlp-grpc = { endpoint = %q } }
+metrics_exporter = "none"
+exporter = "none"
+
 [model_providers.platform]
 name = "Agyn LLM"
 base_url = %q
 env_key = "OPENAI_API_KEY"
 wire_api = "responses"
-`, baseURL)
+`, otlpEndpoint, baseURL)
 	if string(content) != expected {
 		t.Fatalf("expected config %q, got %q", expected, string(content))
 	}
@@ -85,6 +98,7 @@ func TestWriteCodexConfigWithMCPServers(t *testing.T) {
 	t.Setenv("HOME", tmpHome)
 
 	baseURL := "https://example.com"
+	otlpEndpoint := "http://" + tracingproxy.ListenAddress
 	mcpServers := []config.MCPServer{
 		{Name: "memory", Port: 8100},
 		{Name: "cache", Port: 8200},
@@ -109,12 +123,17 @@ func TestWriteCodexConfigWithMCPServers(t *testing.T) {
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
 
+[otel]
+trace_exporter = { otlp-grpc = { endpoint = %q } }
+metrics_exporter = "none"
+exporter = "none"
+
 [model_providers.platform]
 name = "Agyn LLM"
 base_url = %q
 env_key = "OPENAI_API_KEY"
 wire_api = "responses"
-`, baseURL) +
+`, otlpEndpoint, baseURL) +
 		"\n[mcp_servers.memory]\n" +
 		"url = \"http://localhost:8100/mcp\"\n" +
 		"required = true\n" +

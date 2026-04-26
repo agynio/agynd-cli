@@ -91,6 +91,10 @@ func (f *fakeClaudeThreadsClient) GetUnackedMessages(ctx context.Context, in *th
 	return nil, fmt.Errorf("GetUnackedMessages not implemented")
 }
 
+func (f *fakeClaudeThreadsClient) GetUnackedMessageCounts(ctx context.Context, in *threadsv1.GetUnackedMessageCountsRequest, opts ...grpc.CallOption) (*threadsv1.GetUnackedMessageCountsResponse, error) {
+	return nil, fmt.Errorf("GetUnackedMessageCounts not implemented")
+}
+
 func (f *fakeClaudeThreadsClient) AckMessages(ctx context.Context, in *threadsv1.AckMessagesRequest, opts ...grpc.CallOption) (*threadsv1.AckMessagesResponse, error) {
 	f.ackRequests = append(f.ackRequests, in)
 	return &threadsv1.AckMessagesResponse{}, nil

@@ -7,11 +7,17 @@ import (
 	"strings"
 
 	"github.com/agynio/agynd-cli/internal/config"
+	"github.com/agynio/agynd-cli/internal/tracingproxy"
 )
 
 const codexConfigTemplate = `model_provider = "platform"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
+
+[otel]
+trace_exporter = { otlp-grpc = { endpoint = %q } }
+metrics_exporter = "none"
+exporter = "none"
 
 [model_providers.platform]
 name = "Agyn LLM"
@@ -34,7 +40,8 @@ func writeCodexConfig(llmBaseURL string, mcpServers []config.MCPServer) (string,
 }
 
 func codexConfig(llmBaseURL string, mcpServers []config.MCPServer) string {
-	payload := fmt.Sprintf(codexConfigTemplate, llmBaseURL)
+	otlpEndpoint := "http://" + tracingproxy.ListenAddress
+	payload := fmt.Sprintf(codexConfigTemplate, otlpEndpoint, llmBaseURL)
 	if len(mcpServers) == 0 {
 		return payload
 	}
