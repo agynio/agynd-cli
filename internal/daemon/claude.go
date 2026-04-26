@@ -47,7 +47,7 @@ func newClaudeDaemon(ctx context.Context, cfg config.Config, version string) (*D
 		return nil, err
 	}
 
-	otlpEndpoint := "http://localhost:4317"
+	otlpEndpoint := "http://" + tracingproxy.ListenAddress
 	options := claude.Options{
 		BinaryPath: cfg.AgentBinary,
 		WorkDir:    cfg.WorkDir,
