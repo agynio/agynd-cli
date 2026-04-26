@@ -47,14 +47,20 @@ func newClaudeDaemon(ctx context.Context, cfg config.Config, version string) (*D
 		return nil, err
 	}
 
-	otlpEndpoint := "http://" + tracingproxy.ListenAddress
+	otlpEndpoint := "http://localhost:4317"
 	options := claude.Options{
 		BinaryPath: cfg.AgentBinary,
 		WorkDir:    cfg.WorkDir,
 		Env: []string{
 			"PATH=" + agentPathValue(),
 			"LD_LIBRARY_PATH=/agyn-bin/lib",
+			"CLAUDE_CODE_ENABLE_TELEMETRY=1",
+			"CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1",
+			"OTEL_TRACES_EXPORTER=otlp",
+			"OTEL_EXPORTER_OTLP_PROTOCOL=grpc",
 			"OTEL_EXPORTER_OTLP_ENDPOINT=" + otlpEndpoint,
+			"OTEL_METRICS_EXPORTER=none",
+			"OTEL_LOGS_EXPORTER=none",
 			"IS_SANDBOX=1",
 		},
 	}
