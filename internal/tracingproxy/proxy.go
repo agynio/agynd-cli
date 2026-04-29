@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	ListenAddress          = "localhost:4317"
+	ListenAddress          = "127.0.0.1:4317"
 	threadIDAttributeKey   = "agyn.thread.id"
 	messageIDAttributeKey  = "agyn.thread.message.id"
 	workloadIDAttributeKey = "agyn.workload.id"
