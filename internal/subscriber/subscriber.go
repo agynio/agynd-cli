@@ -17,17 +17,16 @@ const messageCreatedEvent = "message.created"
 
 type Subscriber struct {
 	client   notificationsClient
-	agentID  string
 	threadID string
 	wake     chan struct{}
 }
 
 type notificationsClient interface {
-	Subscribe(ctx context.Context, agentID string) (platform.SubscribeStream, error)
+	Subscribe(ctx context.Context) (platform.SubscribeStream, error)
 }
 
-func New(client notificationsClient, agentID string, threadID string) *Subscriber {
-	return &Subscriber{client: client, agentID: agentID, threadID: threadID, wake: make(chan struct{}, 1)}
+func New(client notificationsClient, threadID string) *Subscriber {
+	return &Subscriber{client: client, threadID: threadID, wake: make(chan struct{}, 1)}
 }
 
 func (s *Subscriber) Run(ctx context.Context) error {
@@ -36,7 +35,7 @@ func (s *Subscriber) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		stream, err := s.client.Subscribe(ctx, s.agentID)
+		stream, err := s.client.Subscribe(ctx)
 		if err != nil {
 			log.Printf("subscriber: subscribe failed: %v", err)
 			if err := waitWithBackoff(ctx, backoff); err != nil {

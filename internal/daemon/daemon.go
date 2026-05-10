@@ -281,7 +281,7 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 		threads:      setup.threads,
 		agents:       setup.agents,
 		runners:      setup.runners,
-		subscriber:   subscriber.New(setup.notifications, cfg.AgentID.String(), cfg.ThreadID),
+		subscriber:   subscriber.New(setup.notifications, cfg.ThreadID),
 		consumer:     platform.NewConsumer(setup.threads, pageSize, pageTimeout),
 		codex:        codexClient,
 		mapping:      threadsMapping,
