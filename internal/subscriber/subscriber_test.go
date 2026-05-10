@@ -18,9 +18,8 @@ type fakeNotifications struct {
 	called  int
 }
 
-func (f *fakeNotifications) Subscribe(_ context.Context, agentID string) (platform.SubscribeStream, error) {
+func (f *fakeNotifications) Subscribe(_ context.Context) (platform.SubscribeStream, error) {
 	f.called++
-	f.agentID = agentID
 	return f.stream, nil
 }
 
@@ -121,7 +120,7 @@ func TestSubscriberWakeOnMatchingThread(t *testing.T) {
 	responses := make(chan *notificationsv1.SubscribeResponse, 1)
 	stream := &fakeStream{responses: responses}
 	client := &fakeNotifications{stream: stream}
-	sub := New(client, "agent-1", threadID)
+	sub := New(client, threadID)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -148,7 +147,7 @@ func TestSubscriberIgnoreOtherThread(t *testing.T) {
 	responses := make(chan *notificationsv1.SubscribeResponse, 1)
 	stream := &fakeStream{responses: responses}
 	client := &fakeNotifications{stream: stream}
-	sub := New(client, "agent-1", threadID)
+	sub := New(client, threadID)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
