@@ -19,7 +19,8 @@ import (
 )
 
 const (
-	ListenAddress          = "127.0.0.1:4317"
+	DefaultListenAddress   = "127.0.0.1:4317"
+	ListenAddress          = DefaultListenAddress
 	threadIDAttributeKey   = "agyn.thread.id"
 	messageIDAttributeKey  = "agyn.thread.message.id"
 	workloadIDAttributeKey = "agyn.workload.id"
@@ -27,6 +28,7 @@ const (
 
 type Config struct {
 	TracingAddress string
+	ListenAddress  string
 	ThreadID       string
 	WorkloadID     string
 }
@@ -37,6 +39,7 @@ type Proxy struct {
 	server     *grpc.Server
 	upstream   collectortracev1.TraceServiceClient
 	conn       *grpc.ClientConn
+	address    string
 	threadID   string
 	workloadID string
 	messageMu  sync.RWMutex
@@ -61,11 +64,16 @@ func Start(ctx context.Context, cfg Config) (*Proxy, error) {
 	}
 	collectortracev1.RegisterTraceServiceServer(server, proxy)
 
-	listener, err := net.Listen("tcp", ListenAddress)
+	listenAddress := cfg.ListenAddress
+	if listenAddress == "" {
+		listenAddress = DefaultListenAddress
+	}
+	listener, err := net.Listen("tcp", listenAddress)
 	if err != nil {
 		_ = conn.Close()
-		return nil, fmt.Errorf("listen on %s: %w", ListenAddress, err)
+		return nil, fmt.Errorf("listen on %s: %w", listenAddress, err)
 	}
+	proxy.address = listener.Addr().String()
 
 	go func() {
 		if err := server.Serve(listener); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
@@ -74,6 +82,10 @@ func Start(ctx context.Context, cfg Config) (*Proxy, error) {
 	}()
 
 	return proxy, nil
+}
+
+func (p *Proxy) Address() string {
+	return p.address
 }
 
 func (p *Proxy) Export(ctx context.Context, req *collectortracev1.ExportTraceServiceRequest) (*collectortracev1.ExportTraceServiceResponse, error) {

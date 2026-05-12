@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -194,6 +195,18 @@ func TestRunnersListWorkloadsByThreadValidation(t *testing.T) {
 	}
 }
 
+func TestRunnersListWorkloadsByThreadWrapsError(t *testing.T) {
+	fake := &fakeRunnersGatewayClient{listErr: fmt.Errorf("rpc failed")}
+	client := NewRunners(fake)
+	_, _, err := client.ListWorkloadsByThread(context.Background(), "thread-1", 10, "")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "list workloads by thread") {
+		t.Fatalf("missing operation context: %v", err)
+	}
+}
+
 func TestRunnersTouchWorkload(t *testing.T) {
 	fake := &fakeRunnersGatewayClient{}
 	client := NewRunners(fake)
@@ -209,6 +222,18 @@ func TestRunnersTouchWorkloadValidation(t *testing.T) {
 	client := NewRunners(&fakeRunnersGatewayClient{})
 	if err := client.TouchWorkload(context.Background(), " "); err == nil {
 		t.Fatal("expected error for missing workload id")
+	}
+}
+
+func TestRunnersTouchWorkloadWrapsError(t *testing.T) {
+	fake := &fakeRunnersGatewayClient{touchErr: fmt.Errorf("rpc failed")}
+	client := NewRunners(fake)
+	err := client.TouchWorkload(context.Background(), "workload-1")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "touch workload") {
+		t.Fatalf("missing operation context: %v", err)
 	}
 }
 

@@ -119,13 +119,11 @@ func (d *Daemon) handleClaudeMessage(ctx context.Context, message platform.Messa
 		return err
 	}
 	if err := d.ensureClaudeReady(ctx); err != nil {
-		return err
+		return fmt.Errorf("prepare claude MCP servers: %w", err)
 	}
-	turnCtx, cancel := context.WithTimeout(ctx, turnCompletionTimeout)
-	defer cancel()
-	result, err := d.claude.Turn(turnCtx, claude.TurnParams{Prompt: inputText}, nil)
+	result, err := d.claude.Turn(ctx, claude.TurnParams{Prompt: inputText}, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("run claude turn for message %s: %w", message.ID, err)
 	}
 	response := strings.TrimSpace(result.Response)
 	if response == "" {
@@ -135,7 +133,7 @@ func (d *Daemon) handleClaudeMessage(ctx context.Context, message platform.Messa
 	_, err = d.threads.SendMessage(publishCtx, threadID, d.cfg.AgentID.String(), response, nil)
 	cancel()
 	if err != nil {
-		return err
+		return fmt.Errorf("publish claude response for message %s: %w", message.ID, err)
 	}
 	ackCtx, cancel := context.WithTimeout(ctx, messageAckTimeout)
 	err = d.threads.AckMessages(ackCtx, d.cfg.AgentID.String(), []string{message.ID})

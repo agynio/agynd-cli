@@ -23,13 +23,14 @@ import (
 )
 
 const (
-	pageSize              int32 = 100
-	pageTimeout                 = 30 * time.Second
-	turnStartTimeout            = 5 * time.Minute
-	turnCompletionTimeout       = 5 * time.Minute
-	messagePublishTimeout       = 15 * time.Second
-	messageAckTimeout           = 15 * time.Second
-	mcpReadyTimeout             = 120 * time.Second
+	pageSize                int32 = 100
+	pageTimeout                   = 30 * time.Second
+	turnStartTimeout              = 5 * time.Minute
+	messagePublishTimeout         = 15 * time.Second
+	messageAckTimeout             = 15 * time.Second
+	mcpReadyTimeout               = 120 * time.Second
+	syncRetryInitialBackoff       = 1 * time.Second
+	syncRetryMaxBackoff           = 30 * time.Second
 )
 
 const (
@@ -45,8 +46,8 @@ type Daemon struct {
 	threads       *platform.Threads
 	agents        gatewayv1.AgentsGatewayClient
 	runners       runnersClient
-	subscriber    *subscriber.Subscriber
-	consumer      *platform.Consumer
+	subscriber    messageSubscriber
+	consumer      messageConsumer
 	codex         codexClient
 	mapping       *codexbridge.ThreadMapping
 	mappingStore  *codexbridge.ThreadMappingStore
@@ -58,8 +59,9 @@ type Daemon struct {
 	claudeReadyMu sync.Mutex
 	claudeReady   bool
 
-	processing atomic.Bool
-	syncMu     sync.Mutex
+	processing     atomic.Bool
+	processingWake chan struct{}
+	syncMu         sync.Mutex
 }
 
 type platformConn interface {
@@ -80,6 +82,16 @@ type claudeClient interface {
 
 type runnersClient interface {
 	TouchWorkload(ctx context.Context, workloadID string) error
+}
+
+type messageSubscriber interface {
+	Run(ctx context.Context) error
+	Started() <-chan struct{}
+	Wake() <-chan struct{}
+}
+
+type messageConsumer interface {
+	Sync(ctx context.Context, participantID string, threadID string, handle func(platform.Message) error) error
 }
 
 type platformSetup struct {
@@ -311,17 +323,66 @@ func (d *Daemon) Close() {
 }
 
 func (d *Daemon) Run(ctx context.Context) error {
-	if err := d.syncMessages(ctx); err != nil {
-		return err
-	}
+	d.ensureProcessingWake()
+	go d.runKeepalive(ctx)
 
 	go func() {
 		if err := d.subscriber.Run(ctx); err != nil && ctx.Err() == nil {
 			log.Printf("subscriber stopped: %v", err)
 		}
 	}()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-d.subscriber.Started():
+	}
 
-	go d.runKeepalive(ctx)
+	backoff := syncRetryInitialBackoff
+	var retryTimer *time.Timer
+	var retry <-chan time.Time
+	defer func() {
+		if retryTimer != nil {
+			retryTimer.Stop()
+		}
+	}()
+	scheduleRetry := func(delay time.Duration) {
+		if retryTimer == nil {
+			retryTimer = time.NewTimer(delay)
+		} else {
+			if !retryTimer.Stop() {
+				select {
+				case <-retryTimer.C:
+				default:
+				}
+			}
+			retryTimer.Reset(delay)
+		}
+		retry = retryTimer.C
+	}
+	clearRetry := func() {
+		if retryTimer != nil {
+			if !retryTimer.Stop() {
+				select {
+				case <-retryTimer.C:
+				default:
+				}
+			}
+		}
+		retry = nil
+		backoff = syncRetryInitialBackoff
+	}
+	scheduleFailureRetry := func(operation string, err error) {
+		delay := backoff
+		log.Printf("%s failed: %v; retrying in %s", operation, err, delay)
+		backoff = nextSyncRetryBackoff(backoff)
+		scheduleRetry(delay)
+	}
+
+	if err := d.syncMessages(ctx); err != nil {
+		scheduleFailureRetry("initial sync messages", err)
+	} else {
+		clearRetry()
+	}
 
 	for {
 		select {
@@ -329,27 +390,66 @@ func (d *Daemon) Run(ctx context.Context) error {
 			return ctx.Err()
 		case <-d.subscriber.Wake():
 			if err := d.syncMessages(ctx); err != nil {
-				log.Printf("sync messages failed: %v", err)
+				scheduleFailureRetry("sync messages", err)
+			} else {
+				clearRetry()
+			}
+		case <-retry:
+			if err := d.syncMessages(ctx); err != nil {
+				scheduleFailureRetry("sync messages retry", err)
+			} else {
+				clearRetry()
 			}
 		}
 	}
 }
 
+func (d *Daemon) ensureProcessingWake() {
+	if d.processingWake == nil {
+		d.processingWake = make(chan struct{}, 1)
+	}
+}
+
+func (d *Daemon) signalProcessingStarted() {
+	if d.processingWake == nil {
+		return
+	}
+	select {
+	case d.processingWake <- struct{}{}:
+	default:
+	}
+}
+
+func nextSyncRetryBackoff(current time.Duration) time.Duration {
+	if current <= 0 {
+		return syncRetryInitialBackoff
+	}
+	next := current * 2
+	if next > syncRetryMaxBackoff {
+		return syncRetryMaxBackoff
+	}
+	return next
+}
+
 func (d *Daemon) syncMessages(ctx context.Context) error {
 	d.syncMu.Lock()
 	d.processing.Store(true)
+	d.signalProcessingStarted()
 	defer func() {
 		d.processing.Store(false)
 		d.syncMu.Unlock()
 	}()
 
-	return d.consumer.Sync(ctx, d.cfg.AgentID.String(), d.cfg.ThreadID, func(message platform.Message) error {
+	if err := d.consumer.Sync(ctx, d.cfg.AgentID.String(), d.cfg.ThreadID, func(message platform.Message) error {
 		if d.tracingProxy != nil {
 			d.tracingProxy.SetMessageID(message.ID)
 			defer d.tracingProxy.ClearMessageID()
 		}
 		return d.handleMessage(ctx, message)
-	})
+	}); err != nil {
+		return fmt.Errorf("sync unacked messages: %w", err)
+	}
+	return nil
 }
 
 func (d *Daemon) handleMessage(ctx context.Context, message platform.Message) error {
@@ -385,19 +485,17 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 	})
 	cancel()
 	if err != nil {
-		return err
+		return fmt.Errorf("start codex turn for message %s: %w", message.ID, err)
 	}
 	turnID := strings.TrimSpace(turnResp.Turn.ID)
 	if turnID == "" {
 		return fmt.Errorf("codex turn id missing")
 	}
 	completionCh := d.tracker.Register(turnID)
-	completionCtx, cancel := context.WithTimeout(ctx, turnCompletionTimeout)
-	defer cancel()
 	select {
 	case result := <-completionCh:
 		if result.Err != nil {
-			return result.Err
+			return fmt.Errorf("codex turn %s failed: %w", turnID, result.Err)
 		}
 		if result.ThreadID != codexThreadID {
 			return fmt.Errorf("turn %s thread mismatch", turnID)
@@ -409,7 +507,7 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 		_, err := d.threads.SendMessage(publishCtx, threadID, d.cfg.AgentID.String(), result.Message, nil)
 		cancel()
 		if err != nil {
-			return err
+			return fmt.Errorf("publish codex response for message %s: %w", message.ID, err)
 		}
 		ackCtx, cancel := context.WithTimeout(ctx, messageAckTimeout)
 		err = d.threads.AckMessages(ackCtx, d.cfg.AgentID.String(), []string{message.ID})
@@ -418,9 +516,9 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 			return fmt.Errorf("ack message %s: %w", message.ID, err)
 		}
 		return nil
-	case <-completionCtx.Done():
+	case <-ctx.Done():
 		d.tracker.Cancel(turnID)
-		return completionCtx.Err()
+		return fmt.Errorf("wait for codex turn %s completion: %w", turnID, ctx.Err())
 	}
 }
 
@@ -433,16 +531,16 @@ func (d *Daemon) ensureCodexThread(ctx context.Context, platformThreadID string)
 		updated.LastUsedAtUnixMs = time.Now().UnixMilli()
 		d.mapping.SetRecord(updated)
 		if err := d.mappingStore.Save(updated); err != nil {
-			return "", err
+			return "", fmt.Errorf("save codex thread mapping for platform thread %s: %w", platformThreadID, err)
 		}
 		return record.CodexThreadID, nil
 	}
 	if err := waitForMCPServers(ctx, d.cfg.MCPServers, mcpReadyTimeout); err != nil {
-		return "", err
+		return "", fmt.Errorf("wait for MCP servers before codex thread: %w", err)
 	}
 	record, ok, err := d.mappingStore.Load(platformThreadID)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("load codex thread mapping for platform thread %s: %w", platformThreadID, err)
 	}
 	if ok {
 		if err := d.resumeCodexThread(ctx, record.CodexThreadID); err != nil {
@@ -451,7 +549,7 @@ func (d *Daemon) ensureCodexThread(ctx context.Context, platformThreadID string)
 		record.LastUsedAtUnixMs = time.Now().UnixMilli()
 		d.mapping.SetRecord(record)
 		if err := d.mappingStore.Save(record); err != nil {
-			return "", err
+			return "", fmt.Errorf("save codex thread mapping for platform thread %s: %w", platformThreadID, err)
 		}
 		return record.CodexThreadID, nil
 	}
@@ -468,7 +566,7 @@ func (d *Daemon) ensureCodexThread(ctx context.Context, platformThreadID string)
 	}
 	d.mapping.SetRecord(newRecord)
 	if err := d.mappingStore.Save(newRecord); err != nil {
-		return "", err
+		return "", fmt.Errorf("save codex thread mapping for platform thread %s: %w", platformThreadID, err)
 	}
 	return codexThreadID, nil
 }

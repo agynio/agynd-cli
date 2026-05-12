@@ -29,6 +29,10 @@ func (d *Daemon) runKeepalive(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-d.processingWake:
+			if _, err := d.touchActiveWorkload(ctx, workloadID); err != nil && ctx.Err() == nil {
+				log.Printf("workload keepalive failed: %v", err)
+			}
 		case <-ticker.C:
 			if _, err := d.touchActiveWorkload(ctx, workloadID); err != nil && ctx.Err() == nil {
 				log.Printf("workload keepalive failed: %v", err)
