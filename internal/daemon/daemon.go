@@ -59,8 +59,9 @@ type Daemon struct {
 	claudeReadyMu sync.Mutex
 	claudeReady   bool
 
-	processing atomic.Bool
-	syncMu     sync.Mutex
+	processing     atomic.Bool
+	processingWake chan struct{}
+	syncMu         sync.Mutex
 }
 
 type platformConn interface {
@@ -85,6 +86,7 @@ type runnersClient interface {
 
 type messageSubscriber interface {
 	Run(ctx context.Context) error
+	Ready() <-chan struct{}
 	Wake() <-chan struct{}
 }
 
@@ -321,6 +323,7 @@ func (d *Daemon) Close() {
 }
 
 func (d *Daemon) Run(ctx context.Context) error {
+	d.ensureProcessingWake()
 	go d.runKeepalive(ctx)
 
 	go func() {
@@ -328,6 +331,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 			log.Printf("subscriber stopped: %v", err)
 		}
 	}()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-d.subscriber.Ready():
+	}
 
 	backoff := syncRetryInitialBackoff
 	var retryTimer *time.Timer
@@ -396,6 +404,22 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 }
 
+func (d *Daemon) ensureProcessingWake() {
+	if d.processingWake == nil {
+		d.processingWake = make(chan struct{}, 1)
+	}
+}
+
+func (d *Daemon) signalProcessingStarted() {
+	if d.processingWake == nil {
+		return
+	}
+	select {
+	case d.processingWake <- struct{}{}:
+	default:
+	}
+}
+
 func nextSyncRetryBackoff(current time.Duration) time.Duration {
 	if current <= 0 {
 		return syncRetryInitialBackoff
@@ -410,6 +434,7 @@ func nextSyncRetryBackoff(current time.Duration) time.Duration {
 func (d *Daemon) syncMessages(ctx context.Context) error {
 	d.syncMu.Lock()
 	d.processing.Store(true)
+	d.signalProcessingStarted()
 	defer func() {
 		d.processing.Store(false)
 		d.syncMu.Unlock()

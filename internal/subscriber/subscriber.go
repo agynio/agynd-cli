@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/agynio/agynd-cli/internal/platform"
@@ -16,9 +17,11 @@ import (
 const messageCreatedEvent = "message.created"
 
 type Subscriber struct {
-	client   notificationsClient
-	threadID string
-	wake     chan struct{}
+	client    notificationsClient
+	threadID  string
+	ready     chan struct{}
+	readyOnce sync.Once
+	wake      chan struct{}
 }
 
 type notificationsClient interface {
@@ -26,7 +29,7 @@ type notificationsClient interface {
 }
 
 func New(client notificationsClient, threadID string) *Subscriber {
-	return &Subscriber{client: client, threadID: threadID, wake: make(chan struct{}, 1)}
+	return &Subscriber{client: client, threadID: threadID, ready: make(chan struct{}), wake: make(chan struct{}, 1)}
 }
 
 func (s *Subscriber) Run(ctx context.Context) error {
@@ -44,6 +47,7 @@ func (s *Subscriber) Run(ctx context.Context) error {
 			backoff = nextBackoff(backoff)
 			continue
 		}
+		s.readyOnce.Do(func() { close(s.ready) })
 		backoff = time.Second
 
 		for {
@@ -80,6 +84,10 @@ func (s *Subscriber) Run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+func (s *Subscriber) Ready() <-chan struct{} {
+	return s.ready
 }
 
 func (s *Subscriber) Wake() <-chan struct{} {

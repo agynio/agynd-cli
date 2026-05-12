@@ -52,6 +52,10 @@ func (f *fakeMessageSubscriber) Run(ctx context.Context) error {
 	return ctx.Err()
 }
 
+func (f *fakeMessageSubscriber) Ready() <-chan struct{} {
+	return f.runStarted
+}
+
 func (f *fakeMessageSubscriber) Wake() <-chan struct{} {
 	return f.wake
 }
@@ -93,12 +97,22 @@ func (r *recordingRunnersClient) TouchWorkload(_ context.Context, _ string) erro
 }
 
 type blockingMessageConsumer struct {
-	started chan struct{}
-	release chan struct{}
-	once    sync.Once
+	started         chan struct{}
+	release         chan struct{}
+	subscriberReady <-chan struct{}
+	readyBeforeSync bool
+	mu              sync.Mutex
+	once            sync.Once
 }
 
 func (b *blockingMessageConsumer) Sync(ctx context.Context, _ string, _ string, _ func(platform.Message) error) error {
+	select {
+	case <-b.subscriberReady:
+		b.mu.Lock()
+		b.readyBeforeSync = true
+		b.mu.Unlock()
+	default:
+	}
 	b.once.Do(func() { close(b.started) })
 	select {
 	case <-ctx.Done():
@@ -106,6 +120,12 @@ func (b *blockingMessageConsumer) Sync(ctx context.Context, _ string, _ string, 
 	case <-b.release:
 		return fmt.Errorf("sync released")
 	}
+}
+
+func (b *blockingMessageConsumer) ReadyBeforeSync() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.readyBeforeSync
 }
 
 func TestBuildInputText(t *testing.T) {
@@ -213,7 +233,11 @@ func TestNewClaudeDispatch(t *testing.T) {
 
 func TestRunStartsKeepaliveAndSubscriberBeforeInitialSync(t *testing.T) {
 	subscriber := newFakeMessageSubscriber()
-	consumer := &blockingMessageConsumer{started: make(chan struct{}), release: make(chan struct{})}
+	consumer := &blockingMessageConsumer{
+		started:         make(chan struct{}),
+		release:         make(chan struct{}),
+		subscriberReady: subscriber.runStarted,
+	}
 	runners := &recordingRunnersClient{touched: make(chan struct{}, 1)}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -226,7 +250,6 @@ func TestRunStartsKeepaliveAndSubscriberBeforeInitialSync(t *testing.T) {
 		subscriber: subscriber,
 		consumer:   consumer,
 	}
-	daemon.processing.Store(true)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -239,14 +262,17 @@ func TestRunStartsKeepaliveAndSubscriberBeforeInitialSync(t *testing.T) {
 		t.Fatal("subscriber did not start")
 	}
 	select {
-	case <-runners.touched:
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("keepalive did not touch active workload")
-	}
-	select {
 	case <-consumer.started:
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("initial sync did not run")
+	}
+	if !consumer.ReadyBeforeSync() {
+		t.Fatal("initial sync started before subscriber")
+	}
+	select {
+	case <-runners.touched:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("keepalive did not touch active workload during initial sync")
 	}
 	cancel()
 	select {
