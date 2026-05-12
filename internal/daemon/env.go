@@ -6,15 +6,21 @@ import (
 )
 
 const (
-	cliPathPrefix     = "/agyn-bin/cli"
-	codexDefaultHome  = "/tmp"
+	cliPathPrefix    = "/agyn-bin/cli"
+	agentBinPath     = "/agyn-bin"
+	codexDefaultHome = "/tmp"
 )
 
+func agentPathPrefix() string {
+	return cliPathPrefix + string(os.PathListSeparator) + agentBinPath
+}
+
 func prependCLIPath(pathValue string) string {
+	prefix := agentPathPrefix()
 	if pathValue == "" {
-		return cliPathPrefix
+		return prefix
 	}
-	return cliPathPrefix + string(os.PathListSeparator) + pathValue
+	return prefix + string(os.PathListSeparator) + pathValue
 }
 
 func agentPathValue() string {
