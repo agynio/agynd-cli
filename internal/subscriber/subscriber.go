@@ -19,6 +19,8 @@ const messageCreatedEvent = "message.created"
 type Subscriber struct {
 	client    notificationsClient
 	threadID  string
+	started   chan struct{}
+	startOnce sync.Once
 	ready     chan struct{}
 	readyOnce sync.Once
 	wake      chan struct{}
@@ -29,10 +31,11 @@ type notificationsClient interface {
 }
 
 func New(client notificationsClient, threadID string) *Subscriber {
-	return &Subscriber{client: client, threadID: threadID, ready: make(chan struct{}), wake: make(chan struct{}, 1)}
+	return &Subscriber{client: client, threadID: threadID, started: make(chan struct{}), ready: make(chan struct{}), wake: make(chan struct{}, 1)}
 }
 
 func (s *Subscriber) Run(ctx context.Context) error {
+	s.startOnce.Do(func() { close(s.started) })
 	backoff := time.Second
 	for {
 		if ctx.Err() != nil {
@@ -84,6 +87,10 @@ func (s *Subscriber) Run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+func (s *Subscriber) Started() <-chan struct{} {
+	return s.started
 }
 
 func (s *Subscriber) Ready() <-chan struct{} {

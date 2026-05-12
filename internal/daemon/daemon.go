@@ -86,7 +86,7 @@ type runnersClient interface {
 
 type messageSubscriber interface {
 	Run(ctx context.Context) error
-	Ready() <-chan struct{}
+	Started() <-chan struct{}
 	Wake() <-chan struct{}
 }
 
@@ -334,7 +334,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-d.subscriber.Ready():
+	case <-d.subscriber.Started():
 	}
 
 	backoff := syncRetryInitialBackoff

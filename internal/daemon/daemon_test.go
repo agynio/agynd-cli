@@ -35,6 +35,7 @@ func testConfig(sdk string) config.Config {
 
 type fakeMessageSubscriber struct {
 	runStarted chan struct{}
+	releaseRun chan struct{}
 	wake       chan struct{}
 	runOnce    sync.Once
 }
@@ -42,18 +43,27 @@ type fakeMessageSubscriber struct {
 func newFakeMessageSubscriber() *fakeMessageSubscriber {
 	return &fakeMessageSubscriber{
 		runStarted: make(chan struct{}),
+		releaseRun: make(chan struct{}),
 		wake:       make(chan struct{}, 1),
 	}
 }
 
 func (f *fakeMessageSubscriber) Run(ctx context.Context) error {
 	f.runOnce.Do(func() { close(f.runStarted) })
-	<-ctx.Done()
-	return ctx.Err()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-f.releaseRun:
+		return fmt.Errorf("subscriber released")
+	}
+}
+
+func (f *fakeMessageSubscriber) Started() <-chan struct{} {
+	return f.runStarted
 }
 
 func (f *fakeMessageSubscriber) Ready() <-chan struct{} {
-	return f.runStarted
+	return make(chan struct{})
 }
 
 func (f *fakeMessageSubscriber) Wake() <-chan struct{} {
@@ -97,19 +107,19 @@ func (r *recordingRunnersClient) TouchWorkload(_ context.Context, _ string) erro
 }
 
 type blockingMessageConsumer struct {
-	started         chan struct{}
-	release         chan struct{}
-	subscriberReady <-chan struct{}
-	readyBeforeSync bool
-	mu              sync.Mutex
-	once            sync.Once
+	started           chan struct{}
+	release           chan struct{}
+	subscriberStarted <-chan struct{}
+	startedBeforeSync bool
+	mu                sync.Mutex
+	once              sync.Once
 }
 
 func (b *blockingMessageConsumer) Sync(ctx context.Context, _ string, _ string, _ func(platform.Message) error) error {
 	select {
-	case <-b.subscriberReady:
+	case <-b.subscriberStarted:
 		b.mu.Lock()
-		b.readyBeforeSync = true
+		b.startedBeforeSync = true
 		b.mu.Unlock()
 	default:
 	}
@@ -122,10 +132,10 @@ func (b *blockingMessageConsumer) Sync(ctx context.Context, _ string, _ string, 
 	}
 }
 
-func (b *blockingMessageConsumer) ReadyBeforeSync() bool {
+func (b *blockingMessageConsumer) StartedBeforeSync() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.readyBeforeSync
+	return b.startedBeforeSync
 }
 
 func TestBuildInputText(t *testing.T) {
@@ -234,9 +244,9 @@ func TestNewClaudeDispatch(t *testing.T) {
 func TestRunStartsKeepaliveAndSubscriberBeforeInitialSync(t *testing.T) {
 	subscriber := newFakeMessageSubscriber()
 	consumer := &blockingMessageConsumer{
-		started:         make(chan struct{}),
-		release:         make(chan struct{}),
-		subscriberReady: subscriber.runStarted,
+		started:           make(chan struct{}),
+		release:           make(chan struct{}),
+		subscriberStarted: subscriber.runStarted,
 	}
 	runners := &recordingRunnersClient{touched: make(chan struct{}, 1)}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -266,7 +276,7 @@ func TestRunStartsKeepaliveAndSubscriberBeforeInitialSync(t *testing.T) {
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("initial sync did not run")
 	}
-	if !consumer.ReadyBeforeSync() {
+	if !consumer.StartedBeforeSync() {
 		t.Fatal("initial sync started before subscriber")
 	}
 	select {
@@ -280,6 +290,46 @@ func TestRunStartsKeepaliveAndSubscriberBeforeInitialSync(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "context canceled") {
 			t.Fatalf("unexpected run error: %v", err)
 		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Run did not stop")
+	}
+}
+
+func TestRunInitialSyncProceedsWhenSubscriberNotReady(t *testing.T) {
+	subscriber := newFakeMessageSubscriber()
+	consumer := &fakeMessageConsumer{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	daemon := &Daemon{
+		cfg:        config.Config{AgentID: uuid.MustParse(testAgentID)},
+		runners:    &fakeRunnersClient{},
+		subscriber: subscriber,
+		consumer:   consumer,
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- daemon.Run(ctx)
+	}()
+
+	select {
+	case <-subscriber.runStarted:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("subscriber did not start")
+	}
+	deadline := time.After(500 * time.Millisecond)
+	for consumer.Calls() == 0 {
+		select {
+		case err := <-errCh:
+			t.Fatalf("Run returned before sync: %v", err)
+		case <-deadline:
+			t.Fatal("initial sync did not run while subscriber was not ready")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	cancel()
+	select {
+	case <-errCh:
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("Run did not stop")
 	}
