@@ -37,7 +37,7 @@ func (r *Runners) ListWorkloadsByThread(ctx context.Context, threadID string, pa
 		PageToken: pageToken,
 	})
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("list workloads by thread: %w", err)
 	}
 	workloads := make([]Workload, 0, len(resp.GetWorkloads()))
 	for _, workload := range resp.GetWorkloads() {
@@ -56,7 +56,10 @@ func (r *Runners) TouchWorkload(ctx context.Context, workloadID string) error {
 		return fmt.Errorf("workload id is required")
 	}
 	_, err := r.client.TouchWorkload(ctx, &runnersv1.TouchWorkloadRequest{Id: workloadID})
-	return err
+	if err != nil {
+		return fmt.Errorf("touch workload: %w", err)
+	}
+	return nil
 }
 
 func workloadFromProto(workload *runnersv1.Workload) (Workload, error) {

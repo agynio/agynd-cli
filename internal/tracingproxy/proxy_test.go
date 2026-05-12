@@ -172,14 +172,14 @@ func TestProxyForwardsToUpstream(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	proxy, err := Start(ctx, Config{TracingAddress: listener.Addr().String(), ThreadID: "thread-4", WorkloadID: "workload-4"})
+	proxy, err := Start(ctx, Config{TracingAddress: listener.Addr().String(), ListenAddress: "127.0.0.1:0", ThreadID: "thread-4", WorkloadID: "workload-4"})
 	if err != nil {
 		t.Fatalf("start proxy: %v", err)
 	}
 	defer proxy.Close()
 	proxy.SetMessageID("message-4")
 
-	conn, err := grpc.NewClient(ListenAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(proxy.Address(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		t.Fatalf("dial proxy: %v", err)
 	}
@@ -220,13 +220,13 @@ func TestProxyClearsMessageID(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	proxy, err := Start(ctx, Config{TracingAddress: listener.Addr().String(), ThreadID: "thread-5"})
+	proxy, err := Start(ctx, Config{TracingAddress: listener.Addr().String(), ListenAddress: "127.0.0.1:0", ThreadID: "thread-5"})
 	if err != nil {
 		t.Fatalf("start proxy: %v", err)
 	}
 	defer proxy.Close()
 
-	conn, err := grpc.NewClient(ListenAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(proxy.Address(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		t.Fatalf("dial proxy: %v", err)
 	}
@@ -265,13 +265,13 @@ func TestProxyNoThreadIDPassthrough(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	proxy, err := Start(ctx, Config{TracingAddress: listener.Addr().String(), ThreadID: ""})
+	proxy, err := Start(ctx, Config{TracingAddress: listener.Addr().String(), ListenAddress: "127.0.0.1:0", ThreadID: ""})
 	if err != nil {
 		t.Fatalf("start proxy: %v", err)
 	}
 	defer proxy.Close()
 
-	conn, err := grpc.NewClient(ListenAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(proxy.Address(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		t.Fatalf("dial proxy: %v", err)
 	}

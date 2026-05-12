@@ -2,19 +2,28 @@ package daemon
 
 import (
 	"context"
+	"fmt"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	agentsv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/agents/v1"
 	"github.com/agynio/agynd-cli/internal/codexbridge"
 	"github.com/agynio/agynd-cli/internal/config"
+	"github.com/agynio/agynd-cli/internal/platform"
 	codex "github.com/agynio/codex-sdk-go"
+	"github.com/google/uuid"
 )
 
 type fakeCodexClient struct {
+	mu                sync.Mutex
 	startThreadCalls  int
 	resumeThreadCalls int
 	startParams       *codex.ThreadStartParams
 	resumeParams      *codex.ThreadResumeParams
+	startTurnCtx      context.Context
+	startTurnErr      error
 }
 
 func (f *fakeCodexClient) StartThread(_ context.Context, params *codex.ThreadStartParams) (*codex.ThreadStartResponse, error) {
@@ -29,8 +38,20 @@ func (f *fakeCodexClient) ResumeThread(_ context.Context, params *codex.ThreadRe
 	return &codex.ThreadResumeResponse{Thread: codex.Thread{ID: params.ThreadID}}, nil
 }
 
-func (f *fakeCodexClient) StartTurn(_ context.Context, _ *codex.TurnStartParams) (*codex.TurnStartResponse, error) {
+func (f *fakeCodexClient) StartTurn(ctx context.Context, _ *codex.TurnStartParams) (*codex.TurnStartResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.startTurnCtx = ctx
+	if f.startTurnErr != nil {
+		return nil, f.startTurnErr
+	}
 	return &codex.TurnStartResponse{Turn: codex.Turn{ID: "turn-1"}}, nil
+}
+
+func (f *fakeCodexClient) StartTurnContext() context.Context {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.startTurnCtx
 }
 
 func (f *fakeCodexClient) Close() error {
@@ -114,5 +135,69 @@ func TestEnsureCodexThreadStartsNonEphemeral(t *testing.T) {
 	}
 	if stored.CodexThreadID != "codex-started" {
 		t.Fatalf("expected stored codex id %q, got %q", "codex-started", stored.CodexThreadID)
+	}
+}
+
+func TestHandleCodexMessageWaitsWithoutCompletionTimeout(t *testing.T) {
+	store := codexbridge.NewThreadMappingStore(t.TempDir())
+	client := &fakeCodexClient{}
+	daemon := &Daemon{
+		sdk:          SDKCodex,
+		cfg:          config.Config{AgentID: uuid.MustParse(testAgentID), WorkDir: "/tmp"},
+		codex:        client,
+		mapping:      codexbridge.NewThreadMapping(),
+		mappingStore: store,
+		tracker:      codexbridge.NewTurnTracker(),
+		agent:        &agentsv1.Agent{},
+		threads:      platform.NewThreads(&fakeClaudeThreadsClient{}),
+	}
+	message := platform.Message{ID: "msg-1", ThreadID: "thread-1", Body: "hello"}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- daemon.handleCodexMessage(context.Background(), message)
+	}()
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("handleCodexMessage returned before turn completion: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	daemon.tracker.Notify(codexbridge.TurnResult{
+		ThreadID: "codex-started",
+		TurnID:   "turn-1",
+		Message:  "done",
+	})
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("handleCodexMessage did not finish after turn completion")
+	}
+	if client.StartTurnContext() == nil {
+		t.Fatal("expected StartTurn to be called")
+	}
+}
+
+func TestHandleCodexMessageWrapsStartTurnError(t *testing.T) {
+	store := codexbridge.NewThreadMappingStore(t.TempDir())
+	client := &fakeCodexClient{startTurnErr: fmt.Errorf("rpc unavailable")}
+	daemon := &Daemon{
+		sdk:          SDKCodex,
+		cfg:          config.Config{AgentID: uuid.MustParse(testAgentID), WorkDir: "/tmp"},
+		codex:        client,
+		mapping:      codexbridge.NewThreadMapping(),
+		mappingStore: store,
+		tracker:      codexbridge.NewTurnTracker(),
+		agent:        &agentsv1.Agent{},
+	}
+	message := platform.Message{ID: "msg-1", ThreadID: "thread-1", Body: "hello"}
+	err := daemon.handleCodexMessage(context.Background(), message)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "start codex turn for message msg-1") {
+		t.Fatalf("missing operation context: %v", err)
 	}
 }

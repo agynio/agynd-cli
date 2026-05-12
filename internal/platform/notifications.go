@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"fmt"
 
 	gatewayv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/gateway/v1"
 	notificationsv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/notifications/v1"
@@ -25,5 +26,9 @@ func (n *Notifications) Subscribe(ctx context.Context) (SubscribeStream, error) 
 	request := &notificationsv1.SubscribeRequest{
 		Rooms: []string{threadParticipantSelfRoom},
 	}
-	return n.client.Subscribe(ctx, request)
+	stream, err := n.client.Subscribe(ctx, request)
+	if err != nil {
+		return nil, fmt.Errorf("subscribe notifications: %w", err)
+	}
+	return stream, nil
 }

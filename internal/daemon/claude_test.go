@@ -20,13 +20,15 @@ import (
 type fakeClaudeClient struct {
 	turnCalls int
 	params    claude.TurnParams
+	ctx       context.Context
 	result    *claude.TurnResult
 	err       error
 }
 
-func (f *fakeClaudeClient) Turn(_ context.Context, params claude.TurnParams, _ claude.EventHandler) (*claude.TurnResult, error) {
+func (f *fakeClaudeClient) Turn(ctx context.Context, params claude.TurnParams, _ claude.EventHandler) (*claude.TurnResult, error) {
 	f.turnCalls++
 	f.params = params
+	f.ctx = ctx
 	return f.result, f.err
 }
 
@@ -126,6 +128,9 @@ func TestHandleClaudeMessageSuccess(t *testing.T) {
 	}
 	if client.params.Prompt != "hello" {
 		t.Fatalf("expected prompt %q, got %q", "hello", client.params.Prompt)
+	}
+	if _, ok := client.ctx.Deadline(); ok {
+		t.Fatal("expected claude turn context without completion deadline")
 	}
 	if len(threadsClient.sendRequests) != 1 {
 		t.Fatalf("expected SendMessage to be called once, got %d", len(threadsClient.sendRequests))

@@ -2,7 +2,9 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,6 +30,81 @@ func testConfig(sdk string) config.Config {
 		SDK:            sdk,
 		AgentBinary:    binary,
 		WorkDir:        "/tmp",
+	}
+}
+
+type fakeMessageSubscriber struct {
+	runStarted chan struct{}
+	wake       chan struct{}
+	runOnce    sync.Once
+}
+
+func newFakeMessageSubscriber() *fakeMessageSubscriber {
+	return &fakeMessageSubscriber{
+		runStarted: make(chan struct{}),
+		wake:       make(chan struct{}, 1),
+	}
+}
+
+func (f *fakeMessageSubscriber) Run(ctx context.Context) error {
+	f.runOnce.Do(func() { close(f.runStarted) })
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (f *fakeMessageSubscriber) Wake() <-chan struct{} {
+	return f.wake
+}
+
+type fakeMessageConsumer struct {
+	mu     sync.Mutex
+	errors []error
+	calls  int
+}
+
+func (f *fakeMessageConsumer) Sync(_ context.Context, _ string, _ string, _ func(platform.Message) error) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if len(f.errors) == 0 {
+		return nil
+	}
+	err := f.errors[0]
+	f.errors = f.errors[1:]
+	return err
+}
+
+func (f *fakeMessageConsumer) Calls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+type recordingRunnersClient struct {
+	touched chan struct{}
+}
+
+func (r *recordingRunnersClient) TouchWorkload(_ context.Context, _ string) error {
+	select {
+	case r.touched <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+type blockingMessageConsumer struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (b *blockingMessageConsumer) Sync(ctx context.Context, _ string, _ string, _ func(platform.Message) error) error {
+	b.once.Do(func() { close(b.started) })
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-b.release:
+		return fmt.Errorf("sync released")
 	}
 }
 
@@ -131,5 +208,98 @@ func TestNewClaudeDispatch(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "not yet supported") || strings.Contains(err.Error(), "unknown sdk") {
 		t.Fatalf("unexpected dispatch error: %v", err)
+	}
+}
+
+func TestRunStartsKeepaliveAndSubscriberBeforeInitialSync(t *testing.T) {
+	subscriber := newFakeMessageSubscriber()
+	consumer := &blockingMessageConsumer{started: make(chan struct{}), release: make(chan struct{})}
+	runners := &recordingRunnersClient{touched: make(chan struct{}, 1)}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	daemon := &Daemon{
+		cfg: config.Config{
+			AgentID:    uuid.MustParse(testAgentID),
+			WorkloadID: "workload-1",
+		},
+		runners:    runners,
+		subscriber: subscriber,
+		consumer:   consumer,
+	}
+	daemon.processing.Store(true)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- daemon.Run(ctx)
+	}()
+
+	select {
+	case <-subscriber.runStarted:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("subscriber did not start")
+	}
+	select {
+	case <-runners.touched:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("keepalive did not touch active workload")
+	}
+	select {
+	case <-consumer.started:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("initial sync did not run")
+	}
+	cancel()
+	select {
+	case err := <-errCh:
+		if err == nil || !strings.Contains(err.Error(), "context canceled") {
+			t.Fatalf("unexpected run error: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Run did not stop")
+	}
+}
+
+func TestRunRetriesSyncAfterFailure(t *testing.T) {
+	subscriber := newFakeMessageSubscriber()
+	consumer := &fakeMessageConsumer{errors: []error{fmt.Errorf("transient")}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	daemon := &Daemon{
+		cfg:        config.Config{AgentID: uuid.MustParse(testAgentID)},
+		runners:    &fakeRunnersClient{},
+		subscriber: subscriber,
+		consumer:   consumer,
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- daemon.Run(ctx)
+	}()
+
+	deadline := time.After(1500 * time.Millisecond)
+	for consumer.Calls() < 2 {
+		select {
+		case <-deadline:
+			t.Fatalf("expected sync retry, got %d calls", consumer.Calls())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	cancel()
+	select {
+	case <-errCh:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Run did not stop")
+	}
+}
+
+func TestNextSyncRetryBackoffCapsAtMaximum(t *testing.T) {
+	if got := nextSyncRetryBackoff(0); got != syncRetryInitialBackoff {
+		t.Fatalf("expected initial backoff, got %s", got)
+	}
+	if got := nextSyncRetryBackoff(10 * time.Second); got != 20*time.Second {
+		t.Fatalf("expected doubled backoff, got %s", got)
+	}
+	if got := nextSyncRetryBackoff(20 * time.Second); got != syncRetryMaxBackoff {
+		t.Fatalf("expected max backoff, got %s", got)
 	}
 }

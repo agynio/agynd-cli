@@ -111,7 +111,7 @@ func (d *Daemon) handleAgnMessage(ctx context.Context, message platform.Message)
 		ThreadID: threadID,
 	}, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("run agn turn for message %s: %w", message.ID, err)
 	}
 	response := strings.TrimSpace(result.Response)
 	if response == "" {
@@ -121,7 +121,7 @@ func (d *Daemon) handleAgnMessage(ctx context.Context, message platform.Message)
 	_, err = d.threads.SendMessage(publishCtx, threadID, d.cfg.AgentID.String(), response, nil)
 	cancel()
 	if err != nil {
-		return err
+		return fmt.Errorf("publish agn response for message %s: %w", message.ID, err)
 	}
 	ackCtx, cancel := context.WithTimeout(ctx, messageAckTimeout)
 	err = d.threads.AckMessages(ackCtx, d.cfg.AgentID.String(), []string{message.ID})
