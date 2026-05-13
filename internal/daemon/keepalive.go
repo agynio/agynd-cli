@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -51,9 +52,14 @@ func (d *Daemon) touchActiveWorkload(ctx context.Context, workloadID string) (bo
 	}
 	touchCtx, cancel := context.WithTimeout(ctx, workloadKeepaliveTimeout)
 	err := d.runners.TouchWorkload(touchCtx, workloadID)
+	err = operationContextErr(touchCtx, err)
 	cancel()
 	if err != nil {
-		return false, err
+		return false, operationError(
+			opKeepaliveTouch,
+			workloadKeepaliveTimeout,
+			fmt.Errorf("touch active workload %s: %w", workloadID, err),
+		)
 	}
 	return true, nil
 }

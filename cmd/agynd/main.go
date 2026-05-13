@@ -29,7 +29,11 @@ func main() {
 	}
 	defer agynd.Close()
 
-	if err := agynd.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+	if err := agynd.Run(ctx); err != nil {
+		if errors.Is(err, context.Canceled) {
+			log.Printf("daemon stopped: %v", err)
+			return
+		}
 		log.Fatalf("daemon exited: %v", err)
 	}
 }
