@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -197,7 +198,54 @@ func TestHandleCodexMessageWrapsStartTurnError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "start codex turn for message msg-1") {
-		t.Fatalf("missing operation context: %v", err)
+	for _, expected := range []string{"codex_start_turn", "5m0s", "start codex turn for message msg-1"} {
+		if !strings.Contains(err.Error(), expected) {
+			t.Fatalf("expected %q in error: %v", expected, err)
+		}
+	}
+}
+
+func TestHandleCodexMessageWrapsWaitCancellation(t *testing.T) {
+	store := codexbridge.NewThreadMappingStore(t.TempDir())
+	client := &fakeCodexClient{}
+	daemon := &Daemon{
+		sdk:          SDKCodex,
+		cfg:          config.Config{AgentID: uuid.MustParse(testAgentID), WorkDir: "/tmp"},
+		codex:        client,
+		mapping:      codexbridge.NewThreadMapping(),
+		mappingStore: store,
+		tracker:      codexbridge.NewTurnTracker(),
+		agent:        &agentsv1.Agent{},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	message := platform.Message{ID: "msg-1", ThreadID: "thread-1", Body: "hello"}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- daemon.handleCodexMessage(ctx, message)
+	}()
+	for client.StartTurnContext() == nil {
+		select {
+		case err := <-errCh:
+			t.Fatalf("handleCodexMessage returned before cancellation: %v", err)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	cancel()
+	var err error
+	select {
+	case err = <-errCh:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("handleCodexMessage did not stop after cancellation")
+	}
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	for _, expected := range []string{"codex_wait_turn_completion", "wait for codex turn", "canceled"} {
+		if !strings.Contains(err.Error(), expected) {
+			t.Fatalf("expected %q in error: %v", expected, err)
+		}
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 }

@@ -117,17 +117,11 @@ func (d *Daemon) handleAgnMessage(ctx context.Context, message platform.Message)
 	if response == "" {
 		return fmt.Errorf("agn turn completed with empty response")
 	}
-	publishCtx, cancel := context.WithTimeout(ctx, messagePublishTimeout)
-	_, err = d.threads.SendMessage(publishCtx, threadID, d.cfg.AgentID.String(), response, nil)
-	cancel()
-	if err != nil {
-		return fmt.Errorf("publish agn response for message %s: %w", message.ID, err)
+	if err := d.publishResponse(ctx, SDKAgn, threadID, message, response); err != nil {
+		return err
 	}
-	ackCtx, cancel := context.WithTimeout(ctx, messageAckTimeout)
-	err = d.threads.AckMessages(ackCtx, d.cfg.AgentID.String(), []string{message.ID})
-	cancel()
-	if err != nil {
-		return fmt.Errorf("ack message %s: %w", message.ID, err)
+	if err := d.ackMessage(ctx, message); err != nil {
+		return err
 	}
 	return nil
 }

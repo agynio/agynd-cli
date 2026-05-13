@@ -13,6 +13,18 @@ type Consumer struct {
 	requestTimeout time.Duration
 }
 
+type PageFetchError struct {
+	Err error
+}
+
+func (e *PageFetchError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *PageFetchError) Unwrap() error {
+	return e.Err
+}
+
 func NewConsumer(threads *Threads, pageSize int32, requestTimeout time.Duration) *Consumer {
 	return &Consumer{threads: threads, pageSize: pageSize, requestTimeout: requestTimeout}
 }
@@ -29,11 +41,14 @@ func (c *Consumer) Sync(ctx context.Context, participantID string, threadID stri
 			pageCtx, cancel = context.WithTimeout(ctx, c.requestTimeout)
 		}
 		messages, nextToken, err := c.threads.GetUnackedMessages(pageCtx, participantID, threadID, c.pageSize, pageToken)
+		if err != nil && pageCtx.Err() != nil {
+			err = pageCtx.Err()
+		}
 		if cancel != nil {
 			cancel()
 		}
 		if err != nil {
-			return err
+			return &PageFetchError{Err: err}
 		}
 		if len(messages) > 1 {
 			sort.Slice(messages, func(i, j int) bool {

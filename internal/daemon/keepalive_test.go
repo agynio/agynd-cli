@@ -2,6 +2,9 @@ package daemon
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/agynio/agynd-cli/internal/config"
@@ -10,11 +13,12 @@ import (
 
 type fakeRunnersClient struct {
 	touchCalls []string
+	err        error
 }
 
 func (f *fakeRunnersClient) TouchWorkload(_ context.Context, workloadID string) error {
 	f.touchCalls = append(f.touchCalls, workloadID)
-	return nil
+	return f.err
 }
 
 func TestTouchActiveWorkloadCallsTouch(t *testing.T) {
@@ -33,6 +37,31 @@ func TestTouchActiveWorkloadCallsTouch(t *testing.T) {
 	}
 	if len(fake.touchCalls) != 1 || fake.touchCalls[0] != "workload-1" {
 		t.Fatalf("unexpected touch calls: %v", fake.touchCalls)
+	}
+}
+
+func TestTouchActiveWorkloadWrapsError(t *testing.T) {
+	touchErr := fmt.Errorf("rpc failed")
+	fake := &fakeRunnersClient{err: touchErr}
+	daemon := &Daemon{
+		cfg:     config.Config{AgentID: uuid.MustParse(testAgentID), WorkloadID: "workload-1"},
+		runners: fake,
+	}
+	daemon.processing.Store(true)
+	touched, err := daemon.touchActiveWorkload(context.Background(), "workload-1")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if touched {
+		t.Fatal("expected workload touch to fail")
+	}
+	for _, expected := range []string{"keepalive_touch", "5s", "workload-1"} {
+		if !strings.Contains(err.Error(), expected) {
+			t.Fatalf("expected %q in error: %v", expected, err)
+		}
+	}
+	if !errors.Is(err, touchErr) {
+		t.Fatalf("expected wrapped touch error, got %v", err)
 	}
 }
 

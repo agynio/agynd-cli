@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ type fakeThreadsClient struct {
 	responses []*threadsv1.GetUnackedMessagesResponse
 	index     int
 	requests  []*threadsv1.GetUnackedMessagesRequest
+	err       error
 }
 
 var _ gatewayv1.ThreadsGatewayClient = (*fakeThreadsClient)(nil)
@@ -57,6 +59,9 @@ func (f *fakeThreadsClient) GetMessages(ctx context.Context, in *threadsv1.GetMe
 }
 
 func (f *fakeThreadsClient) GetUnackedMessages(ctx context.Context, in *threadsv1.GetUnackedMessagesRequest, opts ...grpc.CallOption) (*threadsv1.GetUnackedMessagesResponse, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
 	if f.index >= len(f.responses) {
 		return nil, fmt.Errorf("unexpected GetUnackedMessages call")
 	}
@@ -64,6 +69,26 @@ func (f *fakeThreadsClient) GetUnackedMessages(ctx context.Context, in *threadsv
 	resp := f.responses[f.index]
 	f.index++
 	return resp, nil
+}
+
+func TestConsumerSyncWrapsPageFetchError(t *testing.T) {
+	fetchErr := fmt.Errorf("rpc failed")
+	fake := &fakeThreadsClient{err: fetchErr}
+	consumer := NewConsumer(&Threads{client: fake}, 100, 0)
+
+	err := consumer.Sync(context.Background(), "participant-1", "thread-1", func(message Message) error {
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	var pageFetchErr *PageFetchError
+	if !errors.As(err, &pageFetchErr) {
+		t.Fatalf("expected PageFetchError, got %T", err)
+	}
+	if !errors.Is(err, fetchErr) {
+		t.Fatalf("expected wrapped fetch error, got %v", err)
+	}
 }
 
 func (f *fakeThreadsClient) GetUnackedMessageCounts(ctx context.Context, in *threadsv1.GetUnackedMessageCountsRequest, opts ...grpc.CallOption) (*threadsv1.GetUnackedMessageCountsResponse, error) {

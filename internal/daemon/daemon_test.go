@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -330,6 +331,46 @@ func TestRunInitialSyncProceedsWhenSubscriberNotReady(t *testing.T) {
 	cancel()
 	select {
 	case <-errCh:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Run did not stop")
+	}
+}
+
+func TestRunWrapsShutdownCancellation(t *testing.T) {
+	subscriber := newFakeMessageSubscriber()
+	consumer := &fakeMessageConsumer{}
+	ctx, cancel := context.WithCancel(context.Background())
+	daemon := &Daemon{
+		cfg:        config.Config{AgentID: uuid.MustParse(testAgentID)},
+		runners:    &fakeRunnersClient{},
+		subscriber: subscriber,
+		consumer:   consumer,
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- daemon.Run(ctx)
+	}()
+
+	select {
+	case <-subscriber.runStarted:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("subscriber did not start")
+	}
+	cancel()
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		for _, expected := range []string{"process_signal/shutdown", "canceled"} {
+			if !strings.Contains(err.Error(), expected) {
+				t.Fatalf("expected %q in error: %v", expected, err)
+			}
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got %v", err)
+		}
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("Run did not stop")
 	}

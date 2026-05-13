@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -23,14 +24,21 @@ import (
 )
 
 const (
-	pageSize                int32 = 100
-	pageTimeout                   = 30 * time.Second
-	turnStartTimeout              = 5 * time.Minute
-	messagePublishTimeout         = 15 * time.Second
-	messageAckTimeout             = 15 * time.Second
-	mcpReadyTimeout               = 120 * time.Second
-	syncRetryInitialBackoff       = 1 * time.Second
-	syncRetryMaxBackoff           = 30 * time.Second
+	pageSize                  int32 = 100
+	pageTimeout                     = 30 * time.Second
+	turnStartTimeout                = 5 * time.Minute
+	messagePublishTimeout           = 15 * time.Second
+	messageAckTimeout               = 15 * time.Second
+	mcpReadyTimeout                 = 120 * time.Second
+	syncRetryInitialBackoff         = 1 * time.Second
+	syncRetryMaxBackoff             = 30 * time.Second
+	opSyncPageFetch                 = "sync_page_fetch"
+	opCodexStartTurn                = "codex_start_turn"
+	opMessagePublish                = "publish"
+	opMessageAck                    = "ack"
+	opKeepaliveTouch                = "keepalive_touch"
+	opCodexWaitTurnCompletion       = "codex_wait_turn_completion"
+	opProcessSignalShutdown         = "process_signal/shutdown"
 )
 
 const (
@@ -333,7 +341,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}()
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return operationError(opProcessSignalShutdown, 0, ctx.Err())
 	case <-d.subscriber.Started():
 	}
 
@@ -387,7 +395,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return operationError(opProcessSignalShutdown, 0, ctx.Err())
 		case <-d.subscriber.Wake():
 			if err := d.syncMessages(ctx); err != nil {
 				scheduleFailureRetry("sync messages", err)
@@ -402,6 +410,65 @@ func (d *Daemon) Run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+func operationError(op string, timeout time.Duration, err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		if timeout > 0 {
+			return fmt.Errorf("%s timed out after %s: %w", op, timeout, err)
+		}
+		return fmt.Errorf("%s timed out: %w", op, err)
+	}
+	if errors.Is(err, context.Canceled) {
+		return fmt.Errorf("%s canceled: %w", op, err)
+	}
+	if timeout > 0 {
+		return fmt.Errorf("%s failed (timeout %s): %w", op, timeout, err)
+	}
+	return fmt.Errorf("%s failed: %w", op, err)
+}
+
+func operationContextErr(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
+		return ctxErr
+	}
+	return err
+}
+
+func (d *Daemon) publishResponse(ctx context.Context, sdk string, threadID string, message platform.Message, response string) error {
+	publishCtx, cancel := context.WithTimeout(ctx, messagePublishTimeout)
+	_, err := d.threads.SendMessage(publishCtx, threadID, d.cfg.AgentID.String(), response, nil)
+	err = operationContextErr(publishCtx, err)
+	cancel()
+	if err != nil {
+		return operationError(
+			opMessagePublish,
+			messagePublishTimeout,
+			fmt.Errorf("publish %s response for message %s on thread %s: %w", sdk, message.ID, threadID, err),
+		)
+	}
+	return nil
+}
+
+func (d *Daemon) ackMessage(ctx context.Context, message platform.Message) error {
+	ackCtx, cancel := context.WithTimeout(ctx, messageAckTimeout)
+	err := d.threads.AckMessages(ackCtx, d.cfg.AgentID.String(), []string{message.ID})
+	err = operationContextErr(ackCtx, err)
+	cancel()
+	if err != nil {
+		return operationError(
+			opMessageAck,
+			messageAckTimeout,
+			fmt.Errorf("ack message %s: %w", message.ID, err),
+		)
+	}
+	return nil
 }
 
 func (d *Daemon) ensureProcessingWake() {
@@ -447,7 +514,15 @@ func (d *Daemon) syncMessages(ctx context.Context) error {
 		}
 		return d.handleMessage(ctx, message)
 	}); err != nil {
-		return fmt.Errorf("sync unacked messages: %w", err)
+		var pageFetchErr *platform.PageFetchError
+		if !errors.As(err, &pageFetchErr) {
+			return fmt.Errorf("sync unacked messages: %w", err)
+		}
+		return operationError(
+			opSyncPageFetch,
+			pageTimeout,
+			fmt.Errorf("sync unacked messages for participant %s thread %s: %w", d.cfg.AgentID.String(), d.cfg.ThreadID, pageFetchErr),
+		)
 	}
 	return nil
 }
@@ -483,9 +558,10 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 		ThreadID: codexThreadID,
 		Input:    []codex.UserInput{codex.NewTextUserInput(inputText)},
 	})
+	err = operationContextErr(turnCtx, err)
 	cancel()
 	if err != nil {
-		return fmt.Errorf("start codex turn for message %s: %w", message.ID, err)
+		return operationError(opCodexStartTurn, turnStartTimeout, fmt.Errorf("start codex turn for message %s on thread %s: %w", message.ID, codexThreadID, err))
 	}
 	turnID := strings.TrimSpace(turnResp.Turn.ID)
 	if turnID == "" {
@@ -503,22 +579,20 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 		if strings.TrimSpace(result.Message) == "" {
 			return fmt.Errorf("turn %s completed with empty response", turnID)
 		}
-		publishCtx, cancel := context.WithTimeout(ctx, messagePublishTimeout)
-		_, err := d.threads.SendMessage(publishCtx, threadID, d.cfg.AgentID.String(), result.Message, nil)
-		cancel()
-		if err != nil {
-			return fmt.Errorf("publish codex response for message %s: %w", message.ID, err)
+		if err := d.publishResponse(ctx, SDKCodex, threadID, message, result.Message); err != nil {
+			return err
 		}
-		ackCtx, cancel := context.WithTimeout(ctx, messageAckTimeout)
-		err = d.threads.AckMessages(ackCtx, d.cfg.AgentID.String(), []string{message.ID})
-		cancel()
-		if err != nil {
-			return fmt.Errorf("ack message %s: %w", message.ID, err)
+		if err := d.ackMessage(ctx, message); err != nil {
+			return err
 		}
 		return nil
 	case <-ctx.Done():
 		d.tracker.Cancel(turnID)
-		return fmt.Errorf("wait for codex turn %s completion: %w", turnID, ctx.Err())
+		return operationError(
+			opCodexWaitTurnCompletion,
+			0,
+			fmt.Errorf("wait for codex turn %s completion for message %s: %w", turnID, message.ID, ctx.Err()),
+		)
 	}
 }
 
