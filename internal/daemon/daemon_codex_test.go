@@ -249,3 +249,45 @@ func TestHandleCodexMessageWrapsWaitCancellation(t *testing.T) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 }
+
+func TestHandleCodexMessageWrapsTurnResultError(t *testing.T) {
+	store := codexbridge.NewThreadMappingStore(t.TempDir())
+	client := &fakeCodexClient{}
+	daemon := &Daemon{
+		sdk:          SDKCodex,
+		cfg:          config.Config{AgentID: uuid.MustParse(testAgentID), WorkDir: "/tmp"},
+		codex:        client,
+		mapping:      codexbridge.NewThreadMapping(),
+		mappingStore: store,
+		tracker:      codexbridge.NewTurnTracker(),
+		agent:        &agentsv1.Agent{},
+	}
+	message := platform.Message{ID: "msg-1", ThreadID: "thread-1", Body: "hello"}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- daemon.handleCodexMessage(context.Background(), message)
+	}()
+	turnErr := fmt.Errorf("turn failed")
+	daemon.tracker.Notify(codexbridge.TurnResult{
+		ThreadID: "codex-started",
+		TurnID:   "turn-1",
+		Err:      turnErr,
+	})
+	var err error
+	select {
+	case err = <-errCh:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("handleCodexMessage did not finish after turn failure")
+	}
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	for _, expected := range []string{"codex_turn_result", "codex turn turn-1 failed", "msg-1"} {
+		if !strings.Contains(err.Error(), expected) {
+			t.Fatalf("expected %q in error: %v", expected, err)
+		}
+	}
+	if !errors.Is(err, turnErr) {
+		t.Fatalf("expected wrapped turn error, got %v", err)
+	}
+}

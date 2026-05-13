@@ -111,11 +111,19 @@ func (d *Daemon) handleAgnMessage(ctx context.Context, message platform.Message)
 		ThreadID: threadID,
 	}, nil)
 	if err != nil {
-		return fmt.Errorf("run agn turn for message %s: %w", message.ID, err)
+		return operationError(
+			opAgnTurn,
+			0,
+			fmt.Errorf("run agn turn for message %s on thread %s: %w", message.ID, threadID, err),
+		)
 	}
 	response := strings.TrimSpace(result.Response)
 	if response == "" {
-		return fmt.Errorf("agn turn completed with empty response")
+		return operationError(
+			opAgnTurn,
+			0,
+			fmt.Errorf("agn turn completed with empty response for message %s on thread %s", message.ID, threadID),
+		)
 	}
 	if err := d.publishResponse(ctx, SDKAgn, threadID, message, response); err != nil {
 		return err

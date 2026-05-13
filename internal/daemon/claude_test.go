@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -178,6 +179,30 @@ func TestHandleClaudeMessageEmptyResponse(t *testing.T) {
 	}
 	if len(threadsClient.ackRequests) != 0 {
 		t.Fatalf("expected no ack requests, got %d", len(threadsClient.ackRequests))
+	}
+}
+
+func TestHandleClaudeMessageWrapsTurnError(t *testing.T) {
+	turnErr := fmt.Errorf("turn failed")
+	client := &fakeClaudeClient{err: turnErr}
+	daemon := &Daemon{
+		sdk:    SDKClaude,
+		cfg:    config.Config{AgentID: uuid.MustParse(testAgentID)},
+		claude: client,
+	}
+
+	message := platform.Message{ID: "msg-1", ThreadID: "thread-1", Body: "hello"}
+	err := daemon.handleClaudeMessage(context.Background(), message)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	for _, expected := range []string{"claude_turn", "run claude turn for message msg-1", "thread-1"} {
+		if !strings.Contains(err.Error(), expected) {
+			t.Fatalf("expected %q in error: %v", expected, err)
+		}
+	}
+	if !errors.Is(err, turnErr) {
+		t.Fatalf("expected wrapped turn error, got %v", err)
 	}
 }
 

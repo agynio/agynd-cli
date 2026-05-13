@@ -38,6 +38,9 @@ const (
 	opMessageAck                    = "ack"
 	opKeepaliveTouch                = "keepalive_touch"
 	opCodexWaitTurnCompletion       = "codex_wait_turn_completion"
+	opCodexTurnResult               = "codex_turn_result"
+	opAgnTurn                       = "agn_turn"
+	opClaudeTurn                    = "claude_turn"
 	opProcessSignalShutdown         = "process_signal/shutdown"
 )
 
@@ -516,7 +519,7 @@ func (d *Daemon) syncMessages(ctx context.Context) error {
 	}); err != nil {
 		var pageFetchErr *platform.PageFetchError
 		if !errors.As(err, &pageFetchErr) {
-			return fmt.Errorf("sync unacked messages: %w", err)
+			return err
 		}
 		return operationError(
 			opSyncPageFetch,
@@ -571,13 +574,25 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 	select {
 	case result := <-completionCh:
 		if result.Err != nil {
-			return fmt.Errorf("codex turn %s failed: %w", turnID, result.Err)
+			return operationError(
+				opCodexTurnResult,
+				0,
+				fmt.Errorf("codex turn %s failed for message %s: %w", turnID, message.ID, result.Err),
+			)
 		}
 		if result.ThreadID != codexThreadID {
-			return fmt.Errorf("turn %s thread mismatch", turnID)
+			return operationError(
+				opCodexTurnResult,
+				0,
+				fmt.Errorf("codex turn %s thread mismatch for message %s", turnID, message.ID),
+			)
 		}
 		if strings.TrimSpace(result.Message) == "" {
-			return fmt.Errorf("turn %s completed with empty response", turnID)
+			return operationError(
+				opCodexTurnResult,
+				0,
+				fmt.Errorf("codex turn %s completed with empty response for message %s", turnID, message.ID),
+			)
 		}
 		if err := d.publishResponse(ctx, SDKCodex, threadID, message, result.Message); err != nil {
 			return err
