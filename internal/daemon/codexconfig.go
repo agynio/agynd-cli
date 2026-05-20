@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,9 +23,21 @@ exporter = "none"
 [model_providers.platform]
 name = "Agyn LLM"
 base_url = %q
-env_key = "OPENAI_API_KEY"
-wire_api = "responses"
+%swire_api = "responses"
 `
+
+const codexAPIKeyEnv = `env_key = "OPENAI_API_KEY"
+`
+
+const zitiHostnameSuffix = ".ziti"
+
+const (
+	codexEnvPath                     = "PATH"
+	codexEnvHome                     = "HOME"
+	codexEnvCodexHome                = "CODEX_HOME"
+	codexEnvOpenAIAPIKey             = "OPENAI_API_KEY"
+	codexEnvOTELExporterOTLPEndpoint = "OTEL_EXPORTER_OTLP_ENDPOINT"
+)
 
 func writeCodexConfig(llmBaseURL string, mcpServers []config.MCPServer) (string, error) {
 	codexHome := filepath.Join(codexHomeEnv(), ".codex")
@@ -41,7 +54,11 @@ func writeCodexConfig(llmBaseURL string, mcpServers []config.MCPServer) (string,
 
 func codexConfig(llmBaseURL string, mcpServers []config.MCPServer) string {
 	otlpEndpoint := "http://" + tracingproxy.ListenAddress
-	payload := fmt.Sprintf(codexConfigTemplate, otlpEndpoint, llmBaseURL)
+	apiKeyEnv := codexAPIKeyEnv
+	if isZitiLLMBaseURL(llmBaseURL) {
+		apiKeyEnv = ""
+	}
+	payload := fmt.Sprintf(codexConfigTemplate, otlpEndpoint, llmBaseURL, apiKeyEnv)
 	if len(mcpServers) == 0 {
 		return payload
 	}
@@ -52,4 +69,26 @@ func codexConfig(llmBaseURL string, mcpServers []config.MCPServer) string {
 		fmt.Fprintf(&builder, "\n[mcp_servers.%s]\nurl = %q\nrequired = true\nstartup_timeout_sec = 120\n", server.Name, url)
 	}
 	return builder.String()
+}
+
+func codexEnv(cfg config.Config, codexHome, codexHomeValue, otlpEndpoint string) map[string]string {
+	env := map[string]string{
+		codexEnvPath:                     agentPathValue(),
+		codexEnvCodexHome:                codexHome,
+		codexEnvHome:                     codexHomeValue,
+		codexEnvOTELExporterOTLPEndpoint: otlpEndpoint,
+	}
+	if !isZitiLLMBaseURL(cfg.LLMBaseURL) {
+		env[codexEnvOpenAIAPIKey] = cfg.LLMAPIToken
+	}
+	return env
+}
+
+func isZitiLLMBaseURL(llmBaseURL string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(llmBaseURL))
+	if err != nil {
+		return false
+	}
+	hostname := strings.ToLower(parsed.Hostname())
+	return strings.HasSuffix(hostname, zitiHostnameSuffix)
 }

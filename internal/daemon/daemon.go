@@ -279,13 +279,7 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 	options := []codex.Option{
 		codex.WithBinary(cfg.AgentBinary),
 		codex.WithWorkDir(cfg.WorkDir),
-		codex.WithEnv(map[string]string{
-			"PATH":                        agentPathValue(),
-			"CODEX_HOME":                  codexHome,
-			"HOME":                        codexHomeValue,
-			"OPENAI_API_KEY":              cfg.LLMAPIToken,
-			"OTEL_EXPORTER_OTLP_ENDPOINT": otlpEndpoint,
-		}),
+		codex.WithEnv(codexEnv(cfg, codexHome, codexHomeValue, otlpEndpoint)),
 		codex.WithNotificationHandler(bridge),
 		codex.WithApprovalHandler(codex.AutoApprovalHandler{}),
 		codex.WithClientInfo("agynd", version),
