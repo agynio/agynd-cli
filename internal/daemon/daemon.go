@@ -284,7 +284,7 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 		codex.WithApprovalHandler(codex.AutoApprovalHandler{}),
 		codex.WithClientInfo("agynd", version),
 	}
-	codexClient, err := codex.NewClient(ctx, options...)
+	codexClient, err := newCodexClient(ctx, cfg, options...)
 	if err != nil {
 		tracingProxy.Close()
 		_ = setup.gatewayConn.Close()

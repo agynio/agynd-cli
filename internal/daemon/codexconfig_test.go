@@ -1,14 +1,35 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/agynio/agynd-cli/internal/config"
 	"github.com/agynio/agynd-cli/internal/tracingproxy"
+	codex "github.com/agynio/codex-sdk-go"
 )
+
+type noopCodexClient struct{}
+
+func (noopCodexClient) StartThread(context.Context, *codex.ThreadStartParams) (*codex.ThreadStartResponse, error) {
+	return nil, nil
+}
+
+func (noopCodexClient) ResumeThread(context.Context, *codex.ThreadResumeParams) (*codex.ThreadResumeResponse, error) {
+	return nil, nil
+}
+
+func (noopCodexClient) StartTurn(context.Context, *codex.TurnStartParams) (*codex.TurnStartResponse, error) {
+	return nil, nil
+}
+
+func (noopCodexClient) Close() error {
+	return nil
+}
 
 func TestWriteCodexConfig(t *testing.T) {
 	tmpHome := t.TempDir()
@@ -152,6 +173,74 @@ func TestCodexEnvOmitsAPIKeyForZitiLLM(t *testing.T) {
 		t.Fatalf("expected ziti codex env to omit %s", codexEnvOpenAIAPIKey)
 	}
 	assertCodexBaseEnv(t, env)
+}
+
+func TestWithoutCodexAuthEnvRemovesParentAuthVarsDuringStart(t *testing.T) {
+	t.Setenv(codexEnvOpenAIAPIKey, "parent-openai-token")
+	t.Setenv(codexEnvCodexAPIKey, "parent-codex-token")
+	t.Setenv(codexEnvCodexAccessToken, "parent-access-token")
+
+	seenEnv := map[string]bool{}
+	_, err := withoutCodexAuthEnv(func() (codexClient, error) {
+		for _, key := range codexAuthEnvVars {
+			_, seenEnv[key] = os.LookupEnv(key)
+		}
+		return noopCodexClient{}, nil
+	})
+	if err != nil {
+		t.Fatalf("expected auth env scrub to succeed, got %v", err)
+	}
+
+	for _, key := range codexAuthEnvVars {
+		if seenEnv[key] {
+			t.Fatalf("expected %s to be unset while starting ziti Codex", key)
+		}
+	}
+	if got := os.Getenv(codexEnvOpenAIAPIKey); got != "parent-openai-token" {
+		t.Fatalf("expected OPENAI_API_KEY restore, got %q", got)
+	}
+	if got := os.Getenv(codexEnvCodexAPIKey); got != "parent-codex-token" {
+		t.Fatalf("expected CODEX_API_KEY restore, got %q", got)
+	}
+	if got := os.Getenv(codexEnvCodexAccessToken); got != "parent-access-token" {
+		t.Fatalf("expected CODEX_ACCESS_TOKEN restore, got %q", got)
+	}
+}
+
+func TestZitiCodexProcessReceivesNoAuthEnvConfig(t *testing.T) {
+	t.Setenv(codexEnvOpenAIAPIKey, "parent-openai-token")
+	t.Setenv(codexEnvCodexAPIKey, "parent-codex-token")
+	t.Setenv(codexEnvCodexAccessToken, "parent-access-token")
+	t.Setenv("PATH", "/usr/bin")
+	cfg := config.Config{
+		LLMBaseURL:  "http://llm-proxy.ziti:443/v1",
+		LLMAPIToken: "agent-env-token",
+	}
+
+	env := codexEnv(cfg, "/tmp/.codex", "/tmp", "http://127.0.0.1:4317")
+	configPayload := codexConfig(cfg.LLMBaseURL, nil)
+	seenEnv := map[string]bool{}
+	_, err := withoutCodexAuthEnv(func() (codexClient, error) {
+		for _, key := range codexAuthEnvVars {
+			_, seenEnv[key] = os.LookupEnv(key)
+			if _, ok := env[key]; ok {
+				t.Fatalf("expected ziti codex env overrides to omit %s", key)
+			}
+		}
+		return noopCodexClient{}, nil
+	})
+	if err != nil {
+		t.Fatalf("expected auth env scrub to succeed, got %v", err)
+	}
+
+	for _, key := range codexAuthEnvVars {
+		if seenEnv[key] {
+			t.Fatalf("expected parent %s to be absent during ziti Codex start", key)
+		}
+	}
+	if strings.Contains(configPayload, "env_key") {
+		t.Fatalf("expected ziti codex config to omit env_key, got %q", configPayload)
+	}
 }
 
 func TestIsZitiLLMBaseURL(t *testing.T) {
