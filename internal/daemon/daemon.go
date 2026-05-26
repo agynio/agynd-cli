@@ -507,7 +507,6 @@ func (d *Daemon) syncMessages(ctx context.Context) error {
 	if err := d.consumer.Sync(ctx, d.cfg.AgentID.String(), d.cfg.ThreadID, func(message platform.Message) error {
 		if d.tracingProxy != nil {
 			d.tracingProxy.SetMessageID(message.ID)
-			defer d.tracingProxy.ClearMessageID()
 		}
 		return d.handleMessage(ctx, message)
 	}); err != nil {
