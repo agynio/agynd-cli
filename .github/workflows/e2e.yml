@@ -26,9 +26,6 @@ jobs:
       - name: Setup DevSpace
         uses: agynio/e2e/.github/actions/setup-devspace@main
 
-      - name: Deploy agynd-cli from source
-        run: devspace dev
-
       - name: Run E2E tests
         uses: agynio/e2e/.github/actions/run-tests@main
         with:
