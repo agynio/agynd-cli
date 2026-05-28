@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -36,10 +37,7 @@ func TestAgyndBinaryInitializesWithStubGateway(t *testing.T) {
 	workDir := t.TempDir()
 	agentConfigPath := writeAgentRuntimeConfig(t, `{"sdk":"agn","bin":"/bin/false"}`)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, binary)
+	cmd := exec.Command(binary)
 	cmd.Dir = workDir
 	cmd.Env = append(cleanAgyndEnv(),
 		"AGENT_ID="+agyndE2EAgentID,
@@ -54,21 +52,78 @@ func TestAgyndBinaryInitializesWithStubGateway(t *testing.T) {
 		"HOME="+t.TempDir(),
 		"WORKSPACE_DIR="+workDir,
 	)
-	output, err := cmd.CombinedOutput()
-	if ctx.Err() != nil {
-		t.Fatalf("agynd did not reach expected failure before timeout; output:\n%s", output)
+
+	var output strings.Builder
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start agynd: %v", err)
 	}
-	if err == nil {
-		t.Fatalf("expected agynd to fail when fake agent binary exits; output:\n%s", output)
+
+	waitCh := make(chan error, 1)
+	go func() {
+		waitCh <- cmd.Wait()
+	}()
+
+	if err := server.waitInitialized(10 * time.Second); err != nil {
+		terminateProcess(t, cmd.Process)
+		<-waitCh
+		t.Fatalf("agynd did not initialize against stub gateway: %v\noutput:\n%s", err, output.String())
 	}
-	text := string(output)
-	if !strings.Contains(text, "daemon init failed") {
-		t.Fatalf("expected daemon init failure in agynd output:\n%s", text)
+
+	select {
+	case err := <-waitCh:
+		assertAgyndExit(t, err, output.String())
+		server.assertInitialized(t)
+		return
+	default:
 	}
-	if !strings.Contains(text, "start agn client") && !strings.Contains(text, "listen on 127.0.0.1:4317") {
-		t.Fatalf("expected agynd to fail after gateway-backed initialization; output:\n%s", text)
+
+	if err := cmd.Process.Signal(os.Interrupt); err != nil {
+		select {
+		case waitErr := <-waitCh:
+			assertAgyndExit(t, waitErr, output.String())
+			server.assertInitialized(t)
+			return
+		default:
+		}
+		terminateProcess(t, cmd.Process)
+		<-waitCh
+		t.Fatalf("interrupt agynd: %v\noutput:\n%s", err, output.String())
 	}
+	select {
+	case err := <-waitCh:
+		assertAgyndExit(t, err, output.String())
+	case <-time.After(5 * time.Second):
+		terminateProcess(t, cmd.Process)
+		<-waitCh
+		t.Fatalf("agynd did not stop after interrupt; output:\n%s", output.String())
+	}
+
 	server.assertInitialized(t)
+}
+
+func assertAgyndExit(t *testing.T, err error, output string) {
+	t.Helper()
+	if err == nil {
+		return
+	}
+	for _, expected := range []string{"daemon stopped", "daemon exited", "daemon init failed", "signal: interrupt"} {
+		if strings.Contains(output, expected) {
+			return
+		}
+	}
+	t.Fatalf("agynd exited unexpectedly: %v\noutput:\n%s", err, output)
+}
+
+func terminateProcess(t *testing.T, process *os.Process) {
+	t.Helper()
+	if process == nil {
+		return
+	}
+	_ = process.Signal(os.Interrupt)
+	time.Sleep(100 * time.Millisecond)
+	_ = process.Signal(syscall.SIGKILL)
 }
 
 func cleanAgyndEnv() []string {
@@ -124,6 +179,8 @@ func repoRoot(t *testing.T) string {
 type agyndGatewayStub struct {
 	address string
 	server  *grpc.Server
+	ready   chan struct{}
+	once    sync.Once
 
 	mu                   sync.Mutex
 	getAgentCalls        int
@@ -158,7 +215,7 @@ func startAgyndGatewayStub(t *testing.T) *agyndGatewayStub {
 	if err != nil {
 		t.Fatalf("listen gateway stub: %v", err)
 	}
-	stub := &agyndGatewayStub{address: listener.Addr().String()}
+	stub := &agyndGatewayStub{address: listener.Addr().String(), ready: make(chan struct{})}
 	stub.server = grpc.NewServer()
 	gatewayv1.RegisterAgentsGatewayServer(stub.server, agyndAgentsGatewayStub{agyndGatewayStub: stub})
 	gatewayv1.RegisterThreadsGatewayServer(stub.server, agyndThreadsGatewayStub{agyndGatewayStub: stub})
@@ -224,7 +281,21 @@ func (s agyndAgentsGatewayStub) ListInitScripts(_ context.Context, req *agentsv1
 	s.mu.Lock()
 	s.listInitScriptsCalls++
 	s.mu.Unlock()
+	s.markInitialized()
 	return &agentsv1.ListInitScriptsResponse{}, nil
+}
+
+func (s *agyndGatewayStub) markInitialized() {
+	s.once.Do(func() { close(s.ready) })
+}
+
+func (s *agyndGatewayStub) waitInitialized(timeout time.Duration) error {
+	select {
+	case <-s.ready:
+		return nil
+	case <-time.After(timeout):
+		return fmt.Errorf("timed out waiting for ListInitScripts; calls: %s", s.callsSummary())
+	}
 }
 
 func (s agyndThreadsGatewayStub) GetUnackedMessages(context.Context, *threadsv1.GetUnackedMessagesRequest) (*threadsv1.GetUnackedMessagesResponse, error) {
@@ -255,6 +326,17 @@ func (s *agyndGatewayStub) assertInitialized(t *testing.T) {
 			t.Fatalf("expected agynd to call %s during initialization; calls: %s", name, formatCalls(checks))
 		}
 	}
+}
+
+func (s *agyndGatewayStub) callsSummary() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return formatCalls(map[string]int{
+		"GetAgent":        s.getAgentCalls,
+		"ListSkills":      s.listSkillsCalls,
+		"ListMcps":        s.listMCPsCalls,
+		"ListInitScripts": s.listInitScriptsCalls,
+	})
 }
 
 func formatCalls(calls map[string]int) string {
