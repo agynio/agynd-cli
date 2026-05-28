@@ -41,6 +41,7 @@ func writeAgentConfigRaw(t *testing.T, payload string) string {
 func TestFromEnvValid(t *testing.T) {
 	setRequiredEnv(t)
 	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	t.Setenv("AGYND_CONFIG_PATH", configPath)
 	t.Setenv("WORKSPACE_DIR", "/tmp/workdir")
 	t.Setenv("GATEWAY_ADDRESS", "gateway:1234")
 	t.Setenv("TRACING_ADDRESS", "tracing:5678")
@@ -48,7 +49,7 @@ func TestFromEnvValid(t *testing.T) {
 	t.Setenv("LLM_BASE_URL", "https://llm.example")
 	t.Setenv("LLM_API_TOKEN", "token-123")
 
-	cfg, err := fromEnv(configPath)
+	cfg, err := FromEnv()
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}

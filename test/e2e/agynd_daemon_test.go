@@ -34,7 +34,7 @@ func TestAgyndBinaryInitializesWithStubGateway(t *testing.T) {
 	binary := buildAgynd(t)
 	server := startAgyndGatewayStub(t)
 	workDir := t.TempDir()
-	writeAgentRuntimeConfig(t, `{"sdk":"agn","bin":"/bin/false"}`)
+	agentConfigPath := writeAgentRuntimeConfig(t, `{"sdk":"agn","bin":"/bin/false"}`)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -49,6 +49,7 @@ func TestAgyndBinaryInitializesWithStubGateway(t *testing.T) {
 		"TRACING_ADDRESS=127.0.0.1:1",
 		"LLM_BASE_URL=https://testllm.dev/v1/org/agynio/suite/agn",
 		"LLM_API_TOKEN=test-token",
+		"AGYND_CONFIG_PATH="+agentConfigPath,
 		"AGN_TOKEN_COUNTING_ADDRESS=127.0.0.1:1",
 		"HOME="+t.TempDir(),
 		"WORKSPACE_DIR="+workDir,
@@ -102,14 +103,13 @@ func buildAgynd(t *testing.T) string {
 	return path
 }
 
-func writeAgentRuntimeConfig(t *testing.T, payload string) {
+func writeAgentRuntimeConfig(t *testing.T, payload string) string {
 	t.Helper()
-	if err := os.MkdirAll("/agyn-bin", 0o755); err != nil {
-		t.Fatalf("create /agyn-bin: %v", err)
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+		t.Fatalf("write agynd config: %v", err)
 	}
-	if err := os.WriteFile("/agyn-bin/config.json", []byte(payload), 0o644); err != nil {
-		t.Fatalf("write /agyn-bin/config.json: %v", err)
-	}
+	return path
 }
 
 func repoRoot(t *testing.T) string {
