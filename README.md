@@ -28,7 +28,9 @@ go test -v -count=1 -tags e2e ./test/e2e/
 Those tests validate the local agent CLI bridge behavior against deterministic
 TestLLM endpoints through the Codex and AGN SDK flows. The workflow checks out
 `agynio/agn-cli` so the AGN coverage builds and runs the current AGN CLI during
-the test.
+the test. They also build and execute this repository's `cmd/agynd` binary
+against a stub Gateway to verify daemon startup, platform initialization, and
+the expected post-initialization failure path without requiring a full cluster.
 
 This repository does not run the centralized `agynio/e2e` smoke suite. Broader
 platform and service smoke coverage remains owned by the centralized E2E
