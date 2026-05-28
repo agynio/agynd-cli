@@ -20,11 +20,12 @@ jobs:
       - name: Configure Git for private modules
         run: git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
-      - name: Provision cluster
-        uses: agynio/bootstrap/.github/actions/provision@main
-
-      - name: Setup DevSpace
-        uses: agynio/e2e/.github/actions/setup-devspace@main
+      - name: Checkout agn-cli
+        uses: actions/checkout@v4
+        with:
+          repository: agynio/agn-cli
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: .agn-cli
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -43,18 +44,11 @@ jobs:
             --path agynio/api/gateway/v1 \
             --include-imports
 
-      - name: Build agynd binary
-        env:
-          CGO_ENABLED: 0
-        run: |
-          mkdir -p dist
-          go build -trimpath -ldflags="-s -w" -o dist/agynd ./cmd/agynd
+      - name: Install Codex CLI
+        run: npm install -g @openai/codex
 
-      - name: Run E2E tests
-        uses: agynio/e2e/.github/actions/run-tests@main
+      - name: Run repo-local E2E tests
+        run: go test -v -count=1 -tags e2e ./test/e2e/
         env:
-          AGYND_BINARY: ${{ github.workspace }}/dist/agynd
-          E2E_SUITES: playwright-tracing-app
-        with:
-          tag: svc_agents_orchestrator
-          include_smoke: false
+          OPENAI_API_KEY: test-key
+          AGN_REPO_PATH: ${{ github.workspace }}/.agn-cli

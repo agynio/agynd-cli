@@ -19,15 +19,17 @@ devspace dev -w
 
 ## E2E validation
 
-The GitHub E2E workflow is a consumer of the centralized
-`agynio/e2e` harness. It validates agynd-specific integration coverage only:
-the workflow builds this repository's `dist/agynd` binary, provisions the
-standard platform cluster, and runs the agent-orchestrator E2E coverage where
-agynd participates in agent workload execution and tracing. The workflow limits
-the centralized harness to the `playwright-tracing-app` suite and disables the
-shared smoke tag.
+The GitHub E2E workflow runs this repository's local E2E tests with:
 
-This keeps agynd-cli coverage focused on daemon behavior and avoids failing this
-repository for unrelated centralized smoke coverage, such as go-core Gateway
-smoke tests. Broader platform smoke coverage remains owned by the centralized
-E2E repository and service-specific workflows.
+```bash
+go test -v -count=1 -tags e2e ./test/e2e/
+```
+
+Those tests validate the local agent CLI bridge behavior against deterministic
+TestLLM endpoints through the Codex and AGN SDK flows. The workflow checks out
+`agynio/agn-cli` so the AGN coverage builds and runs the current AGN CLI during
+the test.
+
+This repository does not run the centralized `agynio/e2e` smoke suite. Broader
+platform and service smoke coverage remains owned by the centralized E2E
+repository and service-specific workflows.
