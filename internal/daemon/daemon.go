@@ -254,18 +254,6 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 	tracker := codexbridge.NewTurnTracker()
 	bridge := codexbridge.New(tracker)
 	threadsMapping := codexbridge.NewThreadMapping()
-	codexHome, err := writeCodexConfig(cfg.LLMBaseURL, cfg.MCPServers)
-	if err != nil {
-		_ = setup.gatewayConn.Close()
-		return nil, err
-	}
-
-	if err := runInitScripts(ctx, setup.agents, cfg.AgentID.String(), cfg.WorkDir); err != nil {
-		_ = setup.gatewayConn.Close()
-		return nil, err
-	}
-	codexHomeValue := codexHomeEnv()
-	mappingStore := codexbridge.NewThreadMappingStore(codexHomeValue)
 
 	tracingProxy, err := tracingproxy.Start(ctx, tracingproxy.Config{
 		TracingAddress: cfg.TracingAddress,
@@ -278,6 +266,20 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 		return nil, err
 	}
 	otlpEndpoint := "http://" + tracingProxy.Address()
+	codexHome, err := writeCodexConfig(cfg.LLMBaseURL, cfg.MCPServers, otlpEndpoint)
+	if err != nil {
+		tracingProxy.Close()
+		_ = setup.gatewayConn.Close()
+		return nil, err
+	}
+
+	if err := runInitScripts(ctx, setup.agents, cfg.AgentID.String(), cfg.WorkDir); err != nil {
+		tracingProxy.Close()
+		_ = setup.gatewayConn.Close()
+		return nil, err
+	}
+	codexHomeValue := codexHomeEnv()
+	mappingStore := codexbridge.NewThreadMappingStore(codexHomeValue)
 	options := []codex.Option{
 		codex.WithBinary(cfg.AgentBinary),
 		codex.WithWorkDir(cfg.WorkDir),
