@@ -10,7 +10,6 @@ import (
 	"sync"
 
 	"github.com/agynio/agynd-cli/internal/config"
-	"github.com/agynio/agynd-cli/internal/tracingproxy"
 	codex "github.com/agynio/codex-sdk-go"
 )
 
@@ -52,21 +51,20 @@ var codexAuthEnvVars = []string{
 	codexEnvCodexAccessToken,
 }
 
-func writeCodexConfig(llmBaseURL string, mcpServers []config.MCPServer) (string, error) {
+func writeCodexConfig(llmBaseURL string, mcpServers []config.MCPServer, otlpEndpoint string) (string, error) {
 	codexHome := filepath.Join(codexHomeEnv(), ".codex")
 	if err := os.MkdirAll(codexHome, 0o700); err != nil {
 		return "", fmt.Errorf("create codex home dir: %w", err)
 	}
 	configPath := filepath.Join(codexHome, "config.toml")
-	payload := codexConfig(llmBaseURL, mcpServers)
+	payload := codexConfig(llmBaseURL, mcpServers, otlpEndpoint)
 	if err := os.WriteFile(configPath, []byte(payload), 0o600); err != nil {
 		return "", fmt.Errorf("write codex config: %w", err)
 	}
 	return codexHome, nil
 }
 
-func codexConfig(llmBaseURL string, mcpServers []config.MCPServer) string {
-	otlpEndpoint := "http://" + tracingproxy.ListenAddress
+func codexConfig(llmBaseURL string, mcpServers []config.MCPServer, otlpEndpoint string) string {
 	apiKeyEnv := codexAPIKeyEnv
 	if isZitiLLMBaseURL(llmBaseURL) {
 		apiKeyEnv = ""

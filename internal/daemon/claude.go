@@ -39,6 +39,7 @@ func newClaudeDaemon(ctx context.Context, cfg config.Config, version string) (*D
 
 	tracingProxy, err := tracingproxy.Start(ctx, tracingproxy.Config{
 		TracingAddress: cfg.TracingAddress,
+		ListenAddress:  tracingProxyListenAddress,
 		ThreadID:       cfg.ThreadID,
 		WorkloadID:     cfg.WorkloadID,
 	})
@@ -47,7 +48,7 @@ func newClaudeDaemon(ctx context.Context, cfg config.Config, version string) (*D
 		return nil, err
 	}
 
-	otlpEndpoint := "http://" + tracingproxy.ListenAddress
+	otlpEndpoint := "http://" + tracingProxy.Address()
 	options := claude.Options{
 		BinaryPath: cfg.AgentBinary,
 		WorkDir:    cfg.WorkDir,

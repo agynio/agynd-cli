@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/agynio/agynd-cli/internal/config"
-	"github.com/agynio/agynd-cli/internal/tracingproxy"
 	codex "github.com/agynio/codex-sdk-go"
 )
 
@@ -31,12 +30,14 @@ func (noopCodexClient) Close() error {
 	return nil
 }
 
+const testCodexOTLPEndpoint = "http://127.0.0.1:54321"
+
 func TestWriteCodexConfig(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 
 	baseURL := "https://example.com"
-	codexHome, err := writeCodexConfig(baseURL, nil)
+	codexHome, err := writeCodexConfig(baseURL, nil, testCodexOTLPEndpoint)
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
@@ -62,7 +63,7 @@ func TestWriteCodexConfigHomeFallback(t *testing.T) {
 	t.Setenv("HOME", "")
 
 	baseURL := "https://example.com"
-	codexHome, err := writeCodexConfig(baseURL, nil)
+	codexHome, err := writeCodexConfig(baseURL, nil, testCodexOTLPEndpoint)
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
@@ -89,7 +90,7 @@ func TestWriteCodexConfigForZitiOmitsAPIKeyEnv(t *testing.T) {
 	t.Setenv("HOME", tmpHome)
 
 	baseURL := "http://llm-proxy.ziti:443/v1"
-	codexHome, err := writeCodexConfig(baseURL, nil)
+	codexHome, err := writeCodexConfig(baseURL, nil, testCodexOTLPEndpoint)
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
@@ -115,7 +116,7 @@ func TestWriteCodexConfigWithMCPServers(t *testing.T) {
 		{Name: "memory", Port: 8100},
 		{Name: "cache", Port: 8200},
 	}
-	codexHome, err := writeCodexConfig(baseURL, mcpServers)
+	codexHome, err := writeCodexConfig(baseURL, mcpServers, testCodexOTLPEndpoint)
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
@@ -152,7 +153,7 @@ func TestCodexEnvIncludesAPIKeyForPublicLLM(t *testing.T) {
 		LLMAPIToken: "token-123",
 	}
 
-	env := codexEnv(cfg, "/tmp/.codex", "/tmp", "http://127.0.0.1:4317")
+	env := codexEnv(cfg, "/tmp/.codex", "/tmp", testCodexOTLPEndpoint)
 
 	if env[codexEnvOpenAIAPIKey] != "token-123" {
 		t.Fatalf("expected API key in codex env, got %q", env[codexEnvOpenAIAPIKey])
@@ -167,7 +168,7 @@ func TestCodexEnvOmitsAPIKeyForZitiLLM(t *testing.T) {
 		LLMAPIToken: "user-token",
 	}
 
-	env := codexEnv(cfg, "/tmp/.codex", "/tmp", "http://127.0.0.1:4317")
+	env := codexEnv(cfg, "/tmp/.codex", "/tmp", testCodexOTLPEndpoint)
 
 	if _, ok := env[codexEnvOpenAIAPIKey]; ok {
 		t.Fatalf("expected ziti codex env to omit %s", codexEnvOpenAIAPIKey)
@@ -217,8 +218,8 @@ func TestZitiCodexProcessReceivesNoAuthEnvConfig(t *testing.T) {
 		LLMAPIToken: "agent-env-token",
 	}
 
-	env := codexEnv(cfg, "/tmp/.codex", "/tmp", "http://127.0.0.1:4317")
-	configPayload := codexConfig(cfg.LLMBaseURL, nil)
+	env := codexEnv(cfg, "/tmp/.codex", "/tmp", testCodexOTLPEndpoint)
+	configPayload := codexConfig(cfg.LLMBaseURL, nil, testCodexOTLPEndpoint)
 	seenEnv := map[string]bool{}
 	_, err := withoutCodexAuthEnv(func() (codexClient, error) {
 		for _, key := range codexAuthEnvVars {
@@ -277,22 +278,21 @@ func assertCodexBaseEnv(t *testing.T, env map[string]string) {
 	if env[codexEnvHome] != "/tmp" {
 		t.Fatalf("expected HOME, got %q", env[codexEnvHome])
 	}
-	if env[codexEnvOTELExporterOTLPEndpoint] != "http://127.0.0.1:4317" {
+	if env[codexEnvOTELExporterOTLPEndpoint] != testCodexOTLPEndpoint {
 		t.Fatalf("expected OTLP endpoint, got %q", env[codexEnvOTELExporterOTLPEndpoint])
 	}
 }
 
 func codexConfigWithAPIKey(baseURL string) string {
-	return codexConfigPayload(baseURL, `env_key = "OPENAI_API_KEY"
+	return codexConfigPayload(baseURL, testCodexOTLPEndpoint, `env_key = "OPENAI_API_KEY"
 `)
 }
 
 func codexConfigWithoutAPIKey(baseURL string) string {
-	return codexConfigPayload(baseURL, "")
+	return codexConfigPayload(baseURL, testCodexOTLPEndpoint, "")
 }
 
-func codexConfigPayload(baseURL, apiKeyEnv string) string {
-	otlpEndpoint := "http://" + tracingproxy.ListenAddress
+func codexConfigPayload(baseURL, otlpEndpoint, apiKeyEnv string) string {
 	return fmt.Sprintf(`model_provider = "platform"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"

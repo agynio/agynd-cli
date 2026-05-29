@@ -59,6 +59,7 @@ func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daem
 
 	tracingProxy, err := tracingproxy.Start(ctx, tracingproxy.Config{
 		TracingAddress: cfg.TracingAddress,
+		ListenAddress:  tracingProxyListenAddress,
 		ThreadID:       cfg.ThreadID,
 		WorkloadID:     cfg.WorkloadID,
 	})
@@ -67,7 +68,7 @@ func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daem
 		return nil, err
 	}
 
-	otlpEndpoint := "http://" + tracingproxy.ListenAddress
+	otlpEndpoint := "http://" + tracingProxy.Address()
 	agnClient, err := agnsdk.Start(ctx, agnsdk.Options{
 		BinaryPath: cfg.AgentBinary,
 		Env: []string{
