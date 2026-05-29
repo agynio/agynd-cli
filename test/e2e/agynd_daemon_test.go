@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -33,124 +32,144 @@ const (
 
 func TestAgyndBinaryInitializesWithStubGateway(t *testing.T) {
 	binary := buildAgynd(t)
+	agentBinary := buildFakeAgnAgent(t)
 	server := startAgyndGatewayStub(t)
 	workDir := t.TempDir()
-	agentConfigPath := writeAgentRuntimeConfig(t, `{"sdk":"agn","bin":"/bin/false"}`)
+	runtimeDir := t.TempDir()
+	writeAgentRuntimeConfig(t, runtimeDir)
 
-	cmd := exec.Command(binary)
-	cmd.Dir = workDir
-	cmd.Env = append(cleanAgyndEnv(),
-		"AGENT_ID="+agyndE2EAgentID,
-		"THREAD_ID="+agyndE2EThreadID,
-		"WORKLOAD_ID="+agyndE2EWorkloadID,
-		"GATEWAY_ADDRESS="+server.address,
-		"TRACING_ADDRESS=127.0.0.1:1",
-		"LLM_BASE_URL=https://testllm.dev/v1/org/agynio/suite/agn",
-		"LLM_API_TOKEN=test-token",
-		"AGYND_CONFIG_PATH="+agentConfigPath,
-		"AGN_TOKEN_COUNTING_ADDRESS=127.0.0.1:1",
-		"HOME="+t.TempDir(),
-		"WORKSPACE_DIR="+workDir,
-	)
+	container := startAgyndContainer(t, binary, agentBinary, runtimeDir, workDir, server.address)
+	defer container.cleanup()
 
-	var output strings.Builder
-	cmd.Stdout = &output
-	cmd.Stderr = &output
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start agynd: %v", err)
+	if err := server.waitRunStarted(10 * time.Second); err != nil {
+		container.dumpLogs(t)
+		t.Fatalf("agynd did not reach daemon.Run/subscriber startup: %v", err)
 	}
 
-	waitCh := make(chan error, 1)
-	go func() {
-		waitCh <- cmd.Wait()
-	}()
-
-	if err := server.waitInitialized(10 * time.Second); err != nil {
-		terminateProcess(t, cmd.Process)
-		<-waitCh
-		t.Fatalf("agynd did not initialize against stub gateway: %v\noutput:\n%s", err, output.String())
+	if err := container.interrupt(); err != nil {
+		container.dumpLogs(t)
+		t.Fatalf("interrupt agynd container: %v", err)
 	}
-
-	select {
-	case err := <-waitCh:
-		assertAgyndExit(t, err, output.String())
-		server.assertInitialized(t)
-		return
-	default:
-	}
-
-	if err := cmd.Process.Signal(os.Interrupt); err != nil {
-		select {
-		case waitErr := <-waitCh:
-			assertAgyndExit(t, waitErr, output.String())
-			server.assertInitialized(t)
-			return
-		default:
-		}
-		terminateProcess(t, cmd.Process)
-		<-waitCh
-		t.Fatalf("interrupt agynd: %v\noutput:\n%s", err, output.String())
-	}
-	select {
-	case err := <-waitCh:
-		assertAgyndExit(t, err, output.String())
-	case <-time.After(5 * time.Second):
-		terminateProcess(t, cmd.Process)
-		<-waitCh
-		t.Fatalf("agynd did not stop after interrupt; output:\n%s", output.String())
+	if err := container.wait(5 * time.Second); err != nil {
+		container.kill()
+		container.dumpLogs(t)
+		t.Fatalf("agynd container did not stop after interrupt: %v", err)
 	}
 
 	server.assertInitialized(t)
+	server.assertRunStarted(t)
 }
 
-func assertAgyndExit(t *testing.T, err error, output string) {
+type agyndContainer struct {
+	id string
+}
+
+func startAgyndContainer(t *testing.T, binary string, agentBinary string, runtimeDir string, workDir string, gatewayAddress string) *agyndContainer {
 	t.Helper()
-	if err == nil {
-		return
+	args := []string{
+		"create",
+		"--add-host=host.docker.internal:host-gateway",
+		"--workdir", "/workspace",
+		"--env", "AGENT_ID=" + agyndE2EAgentID,
+		"--env", "THREAD_ID=" + agyndE2EThreadID,
+		"--env", "WORKLOAD_ID=" + agyndE2EWorkloadID,
+		"--env", "GATEWAY_ADDRESS=" + hostGatewayAddress(gatewayAddress),
+		"--env", "TRACING_ADDRESS=host.docker.internal:1",
+		"--env", "LLM_BASE_URL=https://testllm.dev/v1/org/agynio/suite/agn",
+		"--env", "LLM_API_TOKEN=test-token",
+		"--env", "AGN_TOKEN_COUNTING_ADDRESS=host.docker.internal:1",
+		"--env", "HOME=/tmp/agynd-home",
+		"--env", "WORKSPACE_DIR=/workspace",
+		"golang:1.26",
+		"/agyn-test-bin/agynd",
 	}
-	for _, expected := range []string{"daemon stopped", "daemon exited", "daemon init failed", "signal: interrupt"} {
-		if strings.Contains(output, expected) {
-			return
-		}
+	output, err := exec.Command("docker", args...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("create agynd container: %v\n%s", err, output)
 	}
-	t.Fatalf("agynd exited unexpectedly: %v\noutput:\n%s", err, output)
+	id := strings.TrimSpace(string(output))
+	if id == "" {
+		t.Fatalf("docker returned empty container id")
+	}
+	container := &agyndContainer{id: id}
+	t.Cleanup(container.cleanup)
+
+	copyToContainer(t, container, filepath.Dir(binary), "/agyn-test-bin")
+	copyToContainer(t, container, agentBinary, "/agyn-test-bin/fake-agn")
+	copyToContainer(t, container, runtimeDir, "/agyn-bin")
+	copyToContainer(t, container, workDir, "/workspace")
+
+	if output, err := exec.Command("docker", "start", container.id).CombinedOutput(); err != nil {
+		t.Fatalf("start agynd container: %v\n%s", err, output)
+	}
+	return container
 }
 
-func terminateProcess(t *testing.T, process *os.Process) {
+func copyToContainer(t *testing.T, container *agyndContainer, source string, destination string) {
 	t.Helper()
-	if process == nil {
-		return
+	if output, err := exec.Command("docker", "cp", source, container.id+":"+destination).CombinedOutput(); err != nil {
+		t.Fatalf("copy %s to container %s: %v\n%s", source, destination, err, output)
 	}
-	_ = process.Signal(os.Interrupt)
-	time.Sleep(100 * time.Millisecond)
-	_ = process.Signal(syscall.SIGKILL)
 }
 
-func cleanAgyndEnv() []string {
-	blocked := map[string]struct{}{
-		"AGENT_MCP_SERVERS": {},
-		"MCP_PORT":          {},
+func hostGatewayAddress(address string) string {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil || host == "" || port == "" {
+		panic(fmt.Sprintf("invalid gateway address %q", address))
 	}
-	env := os.Environ()
-	cleaned := make([]string, 0, len(env))
-	for _, entry := range env {
-		key, _, ok := strings.Cut(entry, "=")
-		if !ok {
-			continue
-		}
-		if _, skip := blocked[key]; skip {
-			continue
-		}
-		cleaned = append(cleaned, entry)
+	return net.JoinHostPort("host.docker.internal", port)
+}
+
+func (c *agyndContainer) interrupt() error {
+	cmd := exec.Command("docker", "kill", "--signal=SIGINT", c.id)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("docker interrupt: %w: %s", err, strings.TrimSpace(string(output)))
 	}
-	return cleaned
+	return nil
+}
+
+func (c *agyndContainer) kill() {
+	_ = exec.Command("docker", "kill", c.id).Run()
+}
+
+func (c *agyndContainer) cleanup() {
+	_ = exec.Command("docker", "rm", "-f", c.id).Run()
+}
+
+func (c *agyndContainer) wait(timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "docker", "wait", c.id)
+	output, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if err != nil {
+		return fmt.Errorf("docker wait: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func (c *agyndContainer) dumpLogs(t *testing.T) {
+	t.Helper()
+	output, err := exec.Command("docker", "logs", c.id).CombinedOutput()
+	if err != nil {
+		t.Logf("docker logs failed: %v", err)
+	}
+	t.Logf("agynd container logs:\n%s", output)
 }
 
 func buildAgynd(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "agynd")
+	dir := filepath.Join(repoRoot(t), ".tmp-e2e", "agynd-"+strings.ReplaceAll(t.Name(), "/", "-"))
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("create agynd build dir: %v", err)
+	}
+	path := filepath.Join(dir, "agynd")
 	cmd := exec.Command("go", "build", "-trimpath", "-o", path, "./cmd/agynd")
 	cmd.Dir = repoRoot(t)
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("build agynd: %v\n%s", err, output)
@@ -158,14 +177,32 @@ func buildAgynd(t *testing.T) string {
 	return path
 }
 
-func writeAgentRuntimeConfig(t *testing.T, payload string) string {
+func writeAgentRuntimeConfig(t *testing.T, runtimeDir string) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+	configPath := filepath.Join(runtimeDir, "config.json")
+	payload := `{"sdk":"agn","bin":"/agyn-test-bin/fake-agn"}`
+	if err := os.WriteFile(configPath, []byte(payload), 0o600); err != nil {
 		t.Fatalf("write agynd config: %v", err)
+	}
+}
+
+func buildFakeAgnAgent(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "fake-agn")
+	source := filepath.Join(t.TempDir(), "main.go")
+	if err := os.WriteFile(source, []byte(fakeAgnAgentSource), 0o600); err != nil {
+		t.Fatalf("write fake agn source: %v", err)
+	}
+	cmd := exec.Command("go", "build", "-trimpath", "-o", path, source)
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("build fake agn agent: %v\n%s", err, output)
 	}
 	return path
 }
+
+const fakeAgnAgentSource = "package main\n\nimport (\n\t\"bufio\"\n\t\"encoding/json\"\n\t\"fmt\"\n\t\"os\"\n)\n\ntype request struct {\n\tJSONRPC string          `json:\"jsonrpc\"`\n\tID      json.RawMessage `json:\"id\"`\n\tMethod  string          `json:\"method\"`\n\tParams  json.RawMessage `json:\"params\"`\n}\n\ntype response struct {\n\tJSONRPC string          `json:\"jsonrpc\"`\n\tID      json.RawMessage `json:\"id\"`\n\tResult  json.RawMessage `json:\"result\"`\n}\n\nfunc main() {\n\tif len(os.Args) < 2 || os.Args[1] != \"serve\" {\n\t\tos.Exit(2)\n\t}\n\tscanner := bufio.NewScanner(os.Stdin)\n\tfor scanner.Scan() {\n\t\tvar req request\n\t\tif err := json.Unmarshal(scanner.Bytes(), &req); err != nil {\n\t\t\tcontinue\n\t\t}\n\t\tresult := json.RawMessage(`{\"thread_id\":\"thread-from-fake-agent\",\"response\":\"ok\"}`)\n\t\tif req.Method == \"thread/list\" {\n\t\t\tresult = json.RawMessage(`{\"data\":[],\"next_cursor\":null}`)\n\t\t}\n\t\tpayload, _ := json.Marshal(response{JSONRPC: \"2.0\", ID: req.ID, Result: result})\n\t\tfmt.Println(string(payload))\n\t}\n}\n"
 
 func repoRoot(t *testing.T) string {
 	t.Helper()
@@ -177,10 +214,10 @@ func repoRoot(t *testing.T) string {
 }
 
 type agyndGatewayStub struct {
-	address string
-	server  *grpc.Server
-	ready   chan struct{}
-	once    sync.Once
+	address    string
+	server     *grpc.Server
+	runStarted chan struct{}
+	runOnce    sync.Once
 
 	mu                   sync.Mutex
 	getAgentCalls        int
@@ -211,11 +248,11 @@ type agyndRunnersGatewayStub struct {
 
 func startAgyndGatewayStub(t *testing.T) *agyndGatewayStub {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := net.Listen("tcp", "0.0.0.0:0")
 	if err != nil {
 		t.Fatalf("listen gateway stub: %v", err)
 	}
-	stub := &agyndGatewayStub{address: listener.Addr().String(), ready: make(chan struct{})}
+	stub := &agyndGatewayStub{address: listener.Addr().String(), runStarted: make(chan struct{})}
 	stub.server = grpc.NewServer()
 	gatewayv1.RegisterAgentsGatewayServer(stub.server, agyndAgentsGatewayStub{agyndGatewayStub: stub})
 	gatewayv1.RegisterThreadsGatewayServer(stub.server, agyndThreadsGatewayStub{agyndGatewayStub: stub})
@@ -281,20 +318,19 @@ func (s agyndAgentsGatewayStub) ListInitScripts(_ context.Context, req *agentsv1
 	s.mu.Lock()
 	s.listInitScriptsCalls++
 	s.mu.Unlock()
-	s.markInitialized()
 	return &agentsv1.ListInitScriptsResponse{}, nil
 }
 
-func (s *agyndGatewayStub) markInitialized() {
-	s.once.Do(func() { close(s.ready) })
+func (s *agyndGatewayStub) markRunStarted() {
+	s.runOnce.Do(func() { close(s.runStarted) })
 }
 
-func (s *agyndGatewayStub) waitInitialized(timeout time.Duration) error {
+func (s *agyndGatewayStub) waitRunStarted(timeout time.Duration) error {
 	select {
-	case <-s.ready:
+	case <-s.runStarted:
 		return nil
 	case <-time.After(timeout):
-		return fmt.Errorf("timed out waiting for ListInitScripts; calls: %s", s.callsSummary())
+		return fmt.Errorf("timed out waiting for Subscribe; calls: %s", s.callsSummary())
 	}
 }
 
@@ -303,6 +339,7 @@ func (s agyndThreadsGatewayStub) GetUnackedMessages(context.Context, *threadsv1.
 }
 
 func (s agyndNotificationsGatewayStub) Subscribe(_ *notificationsv1.SubscribeRequest, stream grpc.ServerStreamingServer[notificationsv1.SubscribeResponse]) error {
+	s.markRunStarted()
 	<-stream.Context().Done()
 	return stream.Context().Err()
 }
@@ -325,6 +362,15 @@ func (s *agyndGatewayStub) assertInitialized(t *testing.T) {
 		if calls == 0 {
 			t.Fatalf("expected agynd to call %s during initialization; calls: %s", name, formatCalls(checks))
 		}
+	}
+}
+
+func (s *agyndGatewayStub) assertRunStarted(t *testing.T) {
+	t.Helper()
+	select {
+	case <-s.runStarted:
+	default:
+		t.Fatal("expected agynd to enter daemon.Run and subscribe to notifications")
 	}
 }
 
