@@ -29,9 +29,9 @@ Those tests validate the local agent CLI bridge behavior against deterministic
 TestLLM endpoints through the Codex and AGN SDK flows. The workflow checks out
 `agynio/agn-cli` so the AGN coverage builds and runs the current AGN CLI during
 the test. They also build and execute this repository's `cmd/agynd` binary with
-a local `config.json` in the test workdir. That test uses a stub Gateway and fake
-AGN agent to verify daemon startup, platform initialization, and subscriber
-startup without requiring a full cluster.
+`/agyn-bin/config.json` installed by the test harness. That test uses a stub
+Gateway and fake AGN agent to verify daemon startup, platform initialization,
+and subscriber startup without requiring a full cluster.
 
 This repository does not run the centralized `agynio/e2e` smoke suite. Broader
 platform and service smoke coverage remains owned by the centralized E2E

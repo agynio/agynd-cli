@@ -36,7 +36,7 @@ func TestAgyndBinaryInitializesWithStubGateway(t *testing.T) {
 	agentBinary := buildFakeAgnAgent(t)
 	server := startAgyndGatewayStub(t)
 	workDir := t.TempDir()
-	writeAgentRuntimeConfig(t, workDir, agentBinary)
+	installAgentRuntimeConfig(t, agentBinary)
 
 	cmd := exec.Command(binary)
 	cmd.Dir = workDir
@@ -139,13 +139,64 @@ func buildAgynd(t *testing.T) string {
 	return path
 }
 
-func writeAgentRuntimeConfig(t *testing.T, runtimeDir string, agentBinary string) {
+func installAgentRuntimeConfig(t *testing.T, agentBinary string) {
 	t.Helper()
-	configPath := filepath.Join(runtimeDir, "config.json")
+	runner := newPrivilegedRunner(t)
+	runner.run(t, "mkdir", "-p", "/agyn-bin")
+
+	backupPath := filepath.Join(t.TempDir(), "config.json.backup")
+	hadExisting := fileExists("/agyn-bin/config.json")
+	if hadExisting {
+		runner.run(t, "cp", "/agyn-bin/config.json", backupPath)
+	}
+	t.Cleanup(func() {
+		if hadExisting {
+			runner.run(t, "cp", backupPath, "/agyn-bin/config.json")
+			return
+		}
+		runner.run(t, "rm", "-f", "/agyn-bin/config.json")
+	})
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
 	payload := fmt.Sprintf(`{"sdk":"agn","bin":%q}`, agentBinary)
 	if err := os.WriteFile(configPath, []byte(payload), 0o600); err != nil {
-		t.Fatalf("write agynd config: %v", err)
+		t.Fatalf("write test config: %v", err)
 	}
+	runner.run(t, "cp", configPath, "/agyn-bin/config.json")
+	runner.run(t, "chmod", "0644", "/agyn-bin/config.json")
+}
+
+type privilegedRunner struct {
+	sudo string
+}
+
+func newPrivilegedRunner(t *testing.T) privilegedRunner {
+	t.Helper()
+	if sudo, err := exec.LookPath("sudo"); err == nil {
+		return privilegedRunner{sudo: sudo}
+	}
+	if os.Geteuid() == 0 {
+		return privilegedRunner{}
+	}
+	t.Fatal("sudo is required to install /agyn-bin/config.json for agynd e2e")
+	return privilegedRunner{}
+}
+
+func (r privilegedRunner) run(t *testing.T, name string, args ...string) {
+	t.Helper()
+	cmdArgs := args
+	if r.sudo != "" {
+		cmdArgs = append([]string{name}, args...)
+		name = r.sudo
+	}
+	if output, err := exec.Command(name, cmdArgs...).CombinedOutput(); err != nil {
+		t.Fatalf("run %s %s: %v\n%s", name, strings.Join(cmdArgs, " "), err, output)
+	}
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func buildFakeAgnAgent(t *testing.T) string {

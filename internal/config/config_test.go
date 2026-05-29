@@ -38,36 +38,6 @@ func writeAgentConfigRaw(t *testing.T, payload string) string {
 	return configPath
 }
 
-func TestSelectAgentConfigPathFallsBackToLocal(t *testing.T) {
-	dir := t.TempDir()
-	localPath := filepath.Join(dir, "config.json")
-	if err := os.WriteFile(localPath, []byte(`{"sdk":"agn","bin":"/bin/agn"}`), 0o600); err != nil {
-		t.Fatalf("write local config: %v", err)
-	}
-
-	selected := selectAgentConfigPath(filepath.Join(dir, "missing.json"), localPath)
-	if selected != localPath {
-		t.Fatalf("expected local config path %q, got %q", localPath, selected)
-	}
-}
-
-func TestSelectAgentConfigPathPrefersPrimary(t *testing.T) {
-	dir := t.TempDir()
-	primaryPath := filepath.Join(dir, "primary.json")
-	localPath := filepath.Join(dir, "config.json")
-	if err := os.WriteFile(primaryPath, []byte(`{"sdk":"agn","bin":"/bin/agn"}`), 0o600); err != nil {
-		t.Fatalf("write primary config: %v", err)
-	}
-	if err := os.WriteFile(localPath, []byte(`{"sdk":"codex","bin":"/bin/codex"}`), 0o600); err != nil {
-		t.Fatalf("write local config: %v", err)
-	}
-
-	selected := selectAgentConfigPath(primaryPath, localPath)
-	if selected != primaryPath {
-		t.Fatalf("expected primary config path %q, got %q", primaryPath, selected)
-	}
-}
-
 func TestFromEnvValid(t *testing.T) {
 	setRequiredEnv(t)
 	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
