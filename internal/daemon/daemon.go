@@ -42,6 +42,7 @@ const (
 	opAgnTurn                       = "agn_turn"
 	opClaudeTurn                    = "claude_turn"
 	opProcessSignalShutdown         = "process_signal/shutdown"
+	tracingProxyListenAddress       = "127.0.0.1:0"
 )
 
 const (
@@ -268,6 +269,7 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 
 	tracingProxy, err := tracingproxy.Start(ctx, tracingproxy.Config{
 		TracingAddress: cfg.TracingAddress,
+		ListenAddress:  tracingProxyListenAddress,
 		ThreadID:       cfg.ThreadID,
 		WorkloadID:     cfg.WorkloadID,
 	})
@@ -275,7 +277,7 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}
-	otlpEndpoint := "http://" + tracingproxy.ListenAddress
+	otlpEndpoint := "http://" + tracingProxy.Address()
 	options := []codex.Option{
 		codex.WithBinary(cfg.AgentBinary),
 		codex.WithWorkDir(cfg.WorkDir),

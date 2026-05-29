@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -12,7 +13,10 @@ import (
 	"github.com/google/uuid"
 )
 
-const agentConfigPath = "/agyn-bin/config.json"
+const (
+	agentConfigPath      = "/agyn-bin/config.json"
+	localAgentConfigPath = "config.json"
+)
 
 var mcpServerNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
@@ -42,7 +46,19 @@ type Config struct {
 }
 
 func FromEnv() (Config, error) {
-	return fromEnv(agentConfigPath)
+	return fromEnv(selectAgentConfigPath(agentConfigPath, localAgentConfigPath))
+}
+
+func selectAgentConfigPath(primaryPath string, localPath string) string {
+	if _, err := os.Stat(primaryPath); err == nil {
+		return primaryPath
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return primaryPath
+	}
+	if _, err := os.Stat(localPath); err == nil {
+		return localPath
+	}
+	return primaryPath
 }
 
 func fromEnv(configPath string) (Config, error) {
