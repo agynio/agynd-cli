@@ -12,6 +12,7 @@ import (
 	collectortracev1 "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	commonv1 "go.opentelemetry.io/proto/otlp/common/v1"
 	resourcev1 "go.opentelemetry.io/proto/otlp/resource/v1"
+	tracev1 "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -175,7 +176,31 @@ func injectMessageID(req *collectortracev1.ExportTraceServiceRequest, messageID 
 			spans.Resource = resource
 		}
 		upsertAttribute(resource, messageIDAttributeKey, messageID)
+		for _, scopeSpans := range spans.GetScopeSpans() {
+			for _, span := range scopeSpans.GetSpans() {
+				upsertSpanAttribute(span, messageIDAttributeKey, messageID)
+			}
+		}
 	}
+}
+
+func upsertSpanAttribute(span *tracev1.Span, key, value string) {
+	if span == nil {
+		return
+	}
+	attributeValue := &commonv1.AnyValue{
+		Value: &commonv1.AnyValue_StringValue{StringValue: value},
+	}
+	for _, attribute := range span.Attributes {
+		if attribute != nil && attribute.Key == key {
+			attribute.Value = attributeValue
+			return
+		}
+	}
+	span.Attributes = append(span.Attributes, &commonv1.KeyValue{
+		Key:   key,
+		Value: attributeValue,
+	})
 }
 
 func upsertAttribute(resource *resourcev1.Resource, key, value string) {

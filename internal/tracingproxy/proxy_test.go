@@ -87,6 +87,15 @@ func TestInjectMessageID(t *testing.T) {
 						{Key: "existing", Value: stringValue("keep")},
 					},
 				},
+				ScopeSpans: []*tracev1.ScopeSpans{
+					{
+						Spans: []*tracev1.Span{
+							{
+								Attributes: []*commonv1.KeyValue{{Key: "span.existing", Value: stringValue("keep")}},
+							},
+						},
+					},
+				},
 			},
 		},
 	}
@@ -100,8 +109,18 @@ func TestInjectMessageID(t *testing.T) {
 	if value, ok := findAttribute(resource, messageIDAttributeKey); !ok || value.GetStringValue() != "message-1" {
 		t.Fatalf("expected message id injected, got %v", value)
 	}
+	span := req.ResourceSpans[0].ScopeSpans[0].Spans[0]
+	if value, ok := findSpanAttribute(span, "span.existing"); !ok || value.GetStringValue() != "keep" {
+		t.Fatalf("expected existing span attribute preserved, got %v", value)
+	}
+	if value, ok := findSpanAttribute(span, messageIDAttributeKey); !ok || value.GetStringValue() != "message-1" {
+		t.Fatalf("expected span message id injected, got %v", value)
+	}
 	if len(resource.Attributes) != 2 {
 		t.Fatalf("expected 2 attributes, got %d", len(resource.Attributes))
+	}
+	if len(span.Attributes) != 2 {
+		t.Fatalf("expected 2 span attributes, got %d", len(span.Attributes))
 	}
 }
 
@@ -382,6 +401,18 @@ func findAttribute(resource *resourcev1.Resource, key string) (*commonv1.AnyValu
 		return nil, false
 	}
 	for _, attribute := range resource.Attributes {
+		if attribute != nil && attribute.Key == key {
+			return attribute.Value, true
+		}
+	}
+	return nil, false
+}
+
+func findSpanAttribute(span *tracev1.Span, key string) (*commonv1.AnyValue, bool) {
+	if span == nil {
+		return nil, false
+	}
+	for _, attribute := range span.Attributes {
 		if attribute != nil && attribute.Key == key {
 			return attribute.Value, true
 		}
