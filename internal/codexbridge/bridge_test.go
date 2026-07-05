@@ -114,3 +114,40 @@ func TestBridgeAccumulatesItems(t *testing.T) {
 	}
 	assertClosed(t, ch)
 }
+
+func TestBridgeUsesAgentMessageDeltas(t *testing.T) {
+	tracker := NewTurnTracker()
+	bridge := New(tracker)
+	ch := tracker.Register("turn-delta")
+
+	bridge.OnAgentMessageDelta(&codex.AgentMessageDeltaNotification{
+		ThreadID: "thread-1",
+		TurnID:   "turn-delta",
+		ItemID:   "item-agent-1",
+		Delta:    "Hello",
+	})
+	bridge.OnAgentMessageDelta(&codex.AgentMessageDeltaNotification{
+		ThreadID: "thread-1",
+		TurnID:   "turn-delta",
+		ItemID:   "item-agent-1",
+		Delta:    " from delta",
+	})
+
+	bridge.OnTurnCompleted(&codex.TurnCompletedNotification{
+		ThreadID: "thread-1",
+		Turn: codex.Turn{
+			ID:     "turn-delta",
+			Status: codex.TurnStatusCompleted,
+			Items:  nil,
+		},
+	})
+
+	result := receiveResult(t, ch)
+	if result.Err != nil {
+		t.Fatalf("unexpected error: %v", result.Err)
+	}
+	if result.Message != "Hello from delta" {
+		t.Fatalf("unexpected message: %q", result.Message)
+	}
+	assertClosed(t, ch)
+}
