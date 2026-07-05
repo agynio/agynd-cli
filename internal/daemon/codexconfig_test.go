@@ -384,5 +384,8 @@ exporter = "none"
 name = "Agyn LLM"
 base_url = %q
 %swire_api = "responses"
+request_max_retries = 0
+stream_max_retries = 0
+supports_websockets = false
 `, otlpEndpoint, baseURL, apiKeyEnv)
 }
