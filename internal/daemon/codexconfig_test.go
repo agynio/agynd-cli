@@ -193,6 +193,9 @@ func TestCodexEnvMergesNoProxySpellingsForZitiLLM(t *testing.T) {
 	env := codexEnv(cfg, "/tmp/.codex", "/tmp", testCodexOTLPEndpoint)
 
 	want := "localhost,.ZITI,127.0.0.1,gateway.ziti,llm-proxy.ziti,tracing.ziti"
+	if env[codexEnvNoProxyLower] != env[codexEnvNoProxy] {
+		t.Fatalf("expected proxy bypass env spellings to match: %s=%q %s=%q", codexEnvNoProxy, env[codexEnvNoProxy], codexEnvNoProxyLower, env[codexEnvNoProxyLower])
+	}
 	if env[codexEnvNoProxy] != want {
 		t.Fatalf("expected %s %q, got %q", codexEnvNoProxy, want, env[codexEnvNoProxy])
 	}
