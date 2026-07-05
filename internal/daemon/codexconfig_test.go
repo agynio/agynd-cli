@@ -163,6 +163,8 @@ func TestCodexEnvIncludesAPIKeyForPublicLLM(t *testing.T) {
 
 func TestCodexEnvOmitsAPIKeyForZitiLLM(t *testing.T) {
 	t.Setenv("PATH", "/usr/bin")
+	t.Setenv(codexEnvNoProxy, "localhost, llm-proxy.ziti")
+	t.Setenv(codexEnvNoProxyLower, "127.0.0.1")
 	cfg := config.Config{
 		LLMBaseURL:  "http://llm-proxy.ziti:443/v1",
 		LLMAPIToken: "user-token",
@@ -173,7 +175,38 @@ func TestCodexEnvOmitsAPIKeyForZitiLLM(t *testing.T) {
 	if _, ok := env[codexEnvOpenAIAPIKey]; ok {
 		t.Fatalf("expected ziti codex env to omit %s", codexEnvOpenAIAPIKey)
 	}
+	if env[codexEnvNoProxy] != "localhost,llm-proxy.ziti,.ziti,gateway.ziti,tracing.ziti" {
+		t.Fatalf("unexpected %s: %q", codexEnvNoProxy, env[codexEnvNoProxy])
+	}
+	if env[codexEnvNoProxyLower] != "127.0.0.1,.ziti,llm-proxy.ziti,gateway.ziti,tracing.ziti" {
+		t.Fatalf("unexpected %s: %q", codexEnvNoProxyLower, env[codexEnvNoProxyLower])
+	}
 	assertCodexBaseEnv(t, env)
+}
+
+func TestCodexEnvDoesNotSetNoProxyForPublicLLM(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin")
+	cfg := config.Config{
+		LLMBaseURL:  "https://llm.example/v1",
+		LLMAPIToken: "token-123",
+	}
+
+	env := codexEnv(cfg, "/tmp/.codex", "/tmp", testCodexOTLPEndpoint)
+
+	if _, ok := env[codexEnvNoProxy]; ok {
+		t.Fatalf("expected public LLM env to omit %s", codexEnvNoProxy)
+	}
+	if _, ok := env[codexEnvNoProxyLower]; ok {
+		t.Fatalf("expected public LLM env to omit %s", codexEnvNoProxyLower)
+	}
+}
+
+func TestZitiNoProxyValue(t *testing.T) {
+	got := zitiNoProxyValue(" localhost, .ZITI,,gateway.ziti ")
+	want := "localhost,.ZITI,gateway.ziti,llm-proxy.ziti,tracing.ziti"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
 }
 
 func TestWithoutCodexAuthEnvRemovesParentAuthVarsDuringStart(t *testing.T) {
