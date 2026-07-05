@@ -2,6 +2,7 @@ package codexbridge
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -14,6 +15,8 @@ type Bridge struct {
 	mu      sync.Mutex
 	items   map[string]*turnItems
 }
+
+var ErrMissingAgentMessage = errors.New("missing agent message")
 
 type turnItems struct {
 	items         []codex.ThreadItem
@@ -148,5 +151,5 @@ func ExtractFinalAnswer(turn codex.Turn) (string, error) {
 			return item.AgentMessage.Text, nil
 		}
 	}
-	return "", fmt.Errorf("turn %s missing agent message", turn.ID)
+	return "", fmt.Errorf("turn %s: %w", turn.ID, ErrMissingAgentMessage)
 }

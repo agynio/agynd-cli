@@ -32,6 +32,8 @@ const (
 	messageAckTimeout               = 15 * time.Second
 	mcpReadyTimeout                 = 120 * time.Second
 	llmReadyTimeout                 = 120 * time.Second
+	codexReadbackTimeout            = 10 * time.Second
+	codexReadbackPollInterval       = 250 * time.Millisecond
 	syncRetryInitialBackoff         = 1 * time.Second
 	syncRetryMaxBackoff             = 30 * time.Second
 	opSyncPageFetch                 = "sync_page_fetch"
@@ -584,6 +586,13 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 			)
 		}
 		if result.Err != nil {
+			if !errors.Is(result.Err, codexbridge.ErrMissingAgentMessage) {
+				return operationError(
+					opCodexTurnResult,
+					0,
+					fmt.Errorf("codex turn %s failed for message %s: %w", turnID, message.ID, result.Err),
+				)
+			}
 			readbackMessage, readbackErr := d.readCodexTurnMessage(ctx, codexThreadID, turnID)
 			if readbackErr != nil {
 				return operationError(
@@ -619,6 +628,29 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 }
 
 func (d *Daemon) readCodexTurnMessage(ctx context.Context, codexThreadID, turnID string) (string, error) {
+	readbackCtx, cancel := context.WithTimeout(ctx, codexReadbackTimeout)
+	defer cancel()
+
+	ticker := time.NewTicker(codexReadbackPollInterval)
+	defer ticker.Stop()
+
+	var lastErr error
+	for {
+		message, err := d.readCodexTurnMessageOnce(readbackCtx, codexThreadID, turnID)
+		if err == nil {
+			return message, nil
+		}
+		lastErr = err
+
+		select {
+		case <-readbackCtx.Done():
+			return "", fmt.Errorf("read codex turn %s after completion: %w: %w", turnID, lastErr, readbackCtx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+func (d *Daemon) readCodexTurnMessageOnce(ctx context.Context, codexThreadID, turnID string) (string, error) {
 	threadResp, err := d.codex.ReadThread(ctx, &codex.ThreadReadParams{
 		ThreadID:     codexThreadID,
 		IncludeTurns: true,
