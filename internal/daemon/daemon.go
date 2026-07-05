@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -30,6 +31,7 @@ const (
 	messagePublishTimeout           = 15 * time.Second
 	messageAckTimeout               = 15 * time.Second
 	mcpReadyTimeout                 = 120 * time.Second
+	llmReadyTimeout                 = 120 * time.Second
 	syncRetryInitialBackoff         = 1 * time.Second
 	syncRetryMaxBackoff             = 30 * time.Second
 	opSyncPageFetch                 = "sync_page_fetch"
@@ -553,6 +555,9 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 	if err != nil {
 		return err
 	}
+	if err := waitForZitiLLMService(ctx, d.cfg.LLMBaseURL, llmReadyTimeout); err != nil {
+		return fmt.Errorf("wait for LLM service before codex turn: %w", err)
+	}
 	turnCtx, cancel := context.WithTimeout(ctx, turnStartTimeout)
 	turnResp, err := d.codex.StartTurn(turnCtx, &codex.TurnStartParams{
 		ThreadID: codexThreadID,
@@ -657,33 +662,89 @@ func (d *Daemon) ensureCodexThread(ctx context.Context, platformThreadID string)
 	return codexThreadID, nil
 }
 
-func waitForMCPServers(ctx context.Context, servers []config.MCPServer, timeout time.Duration) error {
-	if len(servers) == 0 {
+func waitForZitiLLMService(ctx context.Context, llmBaseURL string, timeout time.Duration) error {
+	addr, ok, err := zitiLLMServiceAddress(llmBaseURL)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	return waitForTCPService(ctx, addr, timeout, "LLM service")
+}
+
+func zitiLLMServiceAddress(llmBaseURL string) (string, bool, error) {
+	if !isZitiLLMBaseURL(llmBaseURL) {
+		return "", false, nil
+	}
+	parsed, err := url.Parse(strings.TrimSpace(llmBaseURL))
+	if err != nil {
+		return "", false, fmt.Errorf("parse LLM base URL: %w", err)
+	}
+	host := parsed.Hostname()
+	if host == "" {
+		return "", false, fmt.Errorf("LLM base URL missing host")
+	}
+	port := parsed.Port()
+	if port == "" {
+		switch parsed.Scheme {
+		case "http":
+			port = "80"
+		case "https":
+			port = "443"
+		default:
+			return "", false, fmt.Errorf("LLM base URL scheme %q has no default port", parsed.Scheme)
+		}
+	}
+	return net.JoinHostPort(host, port), true, nil
+}
+
+type tcpServiceTarget struct {
+	label string
+	addr  string
+}
+
+func waitForTCPService(ctx context.Context, addr string, timeout time.Duration, label string) error {
+	return waitForTCPServices(ctx, []tcpServiceTarget{{label: label, addr: addr}}, timeout)
+}
+
+func waitForTCPServices(ctx context.Context, targets []tcpServiceTarget, timeout time.Duration) error {
+	if len(targets) == 0 {
 		return nil
 	}
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
-	for _, server := range servers {
-		addr := fmt.Sprintf("localhost:%d", server.Port)
+	for _, target := range targets {
 		attempt := 0
 		for {
 			attempt++
-			conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
+			conn, err := net.DialTimeout("tcp", target.addr, 1*time.Second)
 			if err == nil {
 				_ = conn.Close()
 				break
 			}
-			log.Printf("waiting for MCP server %s at %s (attempt %d): %v", server.Name, addr, attempt, err)
+			log.Printf("waiting for %s at %s (attempt %d): %v", target.label, target.addr, attempt, err)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			case <-deadline.C:
-				return fmt.Errorf("MCP server %s at %s not ready after %s", server.Name, addr, timeout)
+				return fmt.Errorf("%s at %s not ready after %s", target.label, target.addr, timeout)
 			case <-time.After(2 * time.Second):
 			}
 		}
 	}
 	return nil
+}
+
+func waitForMCPServers(ctx context.Context, servers []config.MCPServer, timeout time.Duration) error {
+	targets := make([]tcpServiceTarget, 0, len(servers))
+	for _, server := range servers {
+		targets = append(targets, tcpServiceTarget{
+			label: fmt.Sprintf("MCP server %s", server.Name),
+			addr:  fmt.Sprintf("localhost:%d", server.Port),
+		})
+	}
+	return waitForTCPServices(ctx, targets, timeout)
 }
 
 type codexThreadDefaults struct {
