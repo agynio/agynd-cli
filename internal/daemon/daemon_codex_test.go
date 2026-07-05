@@ -407,3 +407,61 @@ func TestHandleCodexMessagePollsReadbackUntilAgentMessage(t *testing.T) {
 		t.Fatalf("expected readback polling, got %d calls", calls)
 	}
 }
+
+func TestHandleCodexMessageReturnsReadbackTransportError(t *testing.T) {
+	store := codexbridge.NewThreadMappingStore(t.TempDir())
+	readErr := fmt.Errorf("read transport unavailable")
+	client := &fakeCodexClient{readThreadErr: readErr}
+	daemon := &Daemon{
+		sdk:          SDKCodex,
+		cfg:          config.Config{AgentID: uuid.MustParse(testAgentID), WorkDir: "/tmp"},
+		codex:        client,
+		mapping:      codexbridge.NewThreadMapping(),
+		mappingStore: store,
+		tracker:      codexbridge.NewTurnTracker(),
+		agent:        &agentsv1.Agent{},
+		threads:      platform.NewThreads(&fakeClaudeThreadsClient{}),
+	}
+	message := platform.Message{ID: "msg-1", ThreadID: "thread-1", Body: "hello"}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- daemon.handleCodexMessage(context.Background(), message)
+	}()
+	daemon.tracker.Notify(codexbridge.TurnResult{
+		ThreadID: "codex-started",
+		TurnID:   "turn-1",
+		Err:      codexbridge.ErrMissingAgentMessage,
+	})
+	var err error
+	select {
+	case err = <-errCh:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("handleCodexMessage did not finish after readback transport error")
+	}
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, readErr) {
+		t.Fatalf("expected readback transport error to remain unwrap-able, got %v", err)
+	}
+	if calls := client.ReadThreadCalls(); calls != 1 {
+		t.Fatalf("expected readback transport error to fail without retry, got %d calls", calls)
+	}
+}
+
+func TestReadCodexTurnMessageTimeoutWrapsRetryableCause(t *testing.T) {
+	client := &fakeCodexClient{readThreadResp: &codex.ThreadReadResponse{Thread: codex.Thread{Turns: []codex.Turn{{ID: "turn-1"}}}}}
+	daemon := &Daemon{codex: client}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, err := daemon.readCodexTurnMessage(ctx, "codex-thread-1", "turn-1")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, codexbridge.ErrMissingAgentMessage) {
+		t.Fatalf("expected retryable cause to remain unwrap-able, got %v", err)
+	}
+	if strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Fatalf("expected timeout text without double wrapping context deadline: %v", err)
+	}
+}
