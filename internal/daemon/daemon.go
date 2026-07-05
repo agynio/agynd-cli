@@ -699,55 +699,52 @@ func zitiLLMServiceAddress(llmBaseURL string) (string, bool, error) {
 	return net.JoinHostPort(host, port), true, nil
 }
 
-func waitForTCPService(ctx context.Context, addr string, timeout time.Duration, label string) error {
-	deadline := time.NewTimer(timeout)
-	defer deadline.Stop()
-	attempt := 0
-	for {
-		attempt++
-		conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
-		if err == nil {
-			_ = conn.Close()
-			return nil
-		}
-		log.Printf("waiting for %s at %s (attempt %d): %v", label, addr, attempt, err)
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-deadline.C:
-			return fmt.Errorf("%s at %s not ready after %s", label, addr, timeout)
-		case <-time.After(2 * time.Second):
-		}
-	}
+type tcpServiceTarget struct {
+	label string
+	addr  string
 }
 
-func waitForMCPServers(ctx context.Context, servers []config.MCPServer, timeout time.Duration) error {
-	if len(servers) == 0 {
+func waitForTCPService(ctx context.Context, addr string, timeout time.Duration, label string) error {
+	return waitForTCPServices(ctx, []tcpServiceTarget{{label: label, addr: addr}}, timeout)
+}
+
+func waitForTCPServices(ctx context.Context, targets []tcpServiceTarget, timeout time.Duration) error {
+	if len(targets) == 0 {
 		return nil
 	}
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
-	for _, server := range servers {
-		addr := fmt.Sprintf("localhost:%d", server.Port)
+	for _, target := range targets {
 		attempt := 0
 		for {
 			attempt++
-			conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
+			conn, err := net.DialTimeout("tcp", target.addr, 1*time.Second)
 			if err == nil {
 				_ = conn.Close()
 				break
 			}
-			log.Printf("waiting for MCP server %s at %s (attempt %d): %v", server.Name, addr, attempt, err)
+			log.Printf("waiting for %s at %s (attempt %d): %v", target.label, target.addr, attempt, err)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			case <-deadline.C:
-				return fmt.Errorf("MCP server %s at %s not ready after %s", server.Name, addr, timeout)
+				return fmt.Errorf("%s at %s not ready after %s", target.label, target.addr, timeout)
 			case <-time.After(2 * time.Second):
 			}
 		}
 	}
 	return nil
+}
+
+func waitForMCPServers(ctx context.Context, servers []config.MCPServer, timeout time.Duration) error {
+	targets := make([]tcpServiceTarget, 0, len(servers))
+	for _, server := range servers {
+		targets = append(targets, tcpServiceTarget{
+			label: fmt.Sprintf("MCP server %s", server.Name),
+			addr:  fmt.Sprintf("localhost:%d", server.Port),
+		})
+	}
+	return waitForTCPServices(ctx, targets, timeout)
 }
 
 type codexThreadDefaults struct {
