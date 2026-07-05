@@ -175,13 +175,30 @@ func TestCodexEnvOmitsAPIKeyForZitiLLM(t *testing.T) {
 	if _, ok := env[codexEnvOpenAIAPIKey]; ok {
 		t.Fatalf("expected ziti codex env to omit %s", codexEnvOpenAIAPIKey)
 	}
-	if env[codexEnvNoProxy] != "localhost,llm-proxy.ziti,.ziti,gateway.ziti,tracing.ziti" {
+	if env[codexEnvNoProxy] != "localhost,llm-proxy.ziti,127.0.0.1,.ziti,gateway.ziti,tracing.ziti" {
 		t.Fatalf("unexpected %s: %q", codexEnvNoProxy, env[codexEnvNoProxy])
 	}
-	if env[codexEnvNoProxyLower] != "127.0.0.1,.ziti,llm-proxy.ziti,gateway.ziti,tracing.ziti" {
+	if env[codexEnvNoProxyLower] != env[codexEnvNoProxy] {
 		t.Fatalf("unexpected %s: %q", codexEnvNoProxyLower, env[codexEnvNoProxyLower])
 	}
 	assertCodexBaseEnv(t, env)
+}
+
+func TestCodexEnvMergesNoProxySpellingsForZitiLLM(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin")
+	t.Setenv(codexEnvNoProxy, "localhost, .ZITI")
+	t.Setenv(codexEnvNoProxyLower, "127.0.0.1, localhost, gateway.ziti")
+	cfg := config.Config{LLMBaseURL: "http://llm-proxy.ziti:443/v1"}
+
+	env := codexEnv(cfg, "/tmp/.codex", "/tmp", testCodexOTLPEndpoint)
+
+	want := "localhost,.ZITI,127.0.0.1,gateway.ziti,llm-proxy.ziti,tracing.ziti"
+	if env[codexEnvNoProxy] != want {
+		t.Fatalf("expected %s %q, got %q", codexEnvNoProxy, want, env[codexEnvNoProxy])
+	}
+	if env[codexEnvNoProxyLower] != want {
+		t.Fatalf("expected %s %q, got %q", codexEnvNoProxyLower, want, env[codexEnvNoProxyLower])
+	}
 }
 
 func TestCodexEnvDoesNotSetNoProxyForPublicLLM(t *testing.T) {
@@ -202,8 +219,8 @@ func TestCodexEnvDoesNotSetNoProxyForPublicLLM(t *testing.T) {
 }
 
 func TestZitiNoProxyValue(t *testing.T) {
-	got := zitiNoProxyValue(" localhost, .ZITI,,gateway.ziti ")
-	want := "localhost,.ZITI,gateway.ziti,llm-proxy.ziti,tracing.ziti"
+	got := zitiNoProxyValue(" localhost, .ZITI,,gateway.ziti ", "127.0.0.1,localhost")
+	want := "localhost,.ZITI,gateway.ziti,127.0.0.1,llm-proxy.ziti,tracing.ziti"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}

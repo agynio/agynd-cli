@@ -99,26 +99,30 @@ func codexEnv(cfg config.Config, codexHome, codexHomeValue, otlpEndpoint string)
 		codexEnvOTELExporterOTLPEndpoint: otlpEndpoint,
 	}
 	if isZitiLLMBaseURL(cfg.LLMBaseURL) {
-		noProxyValue := zitiNoProxyValue(os.Getenv(codexEnvNoProxy))
+		noProxyValue := zitiNoProxyValue(
+			os.Getenv(codexEnvNoProxy),
+			os.Getenv(codexEnvNoProxyLower),
+		)
 		env[codexEnvNoProxy] = noProxyValue
-		env[codexEnvNoProxyLower] = zitiNoProxyValue(os.Getenv(codexEnvNoProxyLower))
+		env[codexEnvNoProxyLower] = noProxyValue
 	} else {
 		env[codexEnvOpenAIAPIKey] = cfg.LLMAPIToken
 	}
 	return env
 }
 
-func zitiNoProxyValue(current string) string {
-	entries := splitNoProxy(current)
-	seen := make(map[string]struct{}, len(entries)+len(codexZitiNoProxyHosts))
-	merged := make([]string, 0, len(entries)+len(codexZitiNoProxyHosts))
-	for _, entry := range entries {
-		key := strings.ToLower(entry)
-		if _, ok := seen[key]; ok {
-			continue
+func zitiNoProxyValue(values ...string) string {
+	seen := make(map[string]struct{}, len(codexZitiNoProxyHosts))
+	merged := make([]string, 0, len(codexZitiNoProxyHosts))
+	for _, value := range values {
+		for _, entry := range splitNoProxy(value) {
+			key := strings.ToLower(entry)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			merged = append(merged, entry)
 		}
-		seen[key] = struct{}{}
-		merged = append(merged, entry)
 	}
 	for _, host := range codexZitiNoProxyHosts {
 		key := strings.ToLower(host)
