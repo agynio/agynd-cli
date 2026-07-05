@@ -85,6 +85,7 @@ type platformConn interface {
 type codexClient interface {
 	StartThread(ctx context.Context, params *codex.ThreadStartParams) (*codex.ThreadStartResponse, error)
 	ResumeThread(ctx context.Context, params *codex.ThreadResumeParams) (*codex.ThreadResumeResponse, error)
+	ReadThread(ctx context.Context, params *codex.ThreadReadParams) (*codex.ThreadReadResponse, error)
 	StartTurn(ctx context.Context, params *codex.TurnStartParams) (*codex.TurnStartResponse, error)
 	Close() error
 }
@@ -575,19 +576,23 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 	completionCh := d.tracker.Register(turnID)
 	select {
 	case result := <-completionCh:
-		if result.Err != nil {
-			return operationError(
-				opCodexTurnResult,
-				0,
-				fmt.Errorf("codex turn %s failed for message %s: %w", turnID, message.ID, result.Err),
-			)
-		}
 		if result.ThreadID != codexThreadID {
 			return operationError(
 				opCodexTurnResult,
 				0,
 				fmt.Errorf("codex turn %s thread mismatch for message %s", turnID, message.ID),
 			)
+		}
+		if result.Err != nil {
+			readbackMessage, readbackErr := d.readCodexTurnMessage(ctx, codexThreadID, turnID)
+			if readbackErr != nil {
+				return operationError(
+					opCodexTurnResult,
+					0,
+					fmt.Errorf("codex turn %s failed for message %s: %w; readback failed: %w", turnID, message.ID, result.Err, readbackErr),
+				)
+			}
+			result.Message = readbackMessage
 		}
 		if strings.TrimSpace(result.Message) == "" {
 			return operationError(
@@ -611,6 +616,27 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 			fmt.Errorf("wait for codex turn %s completion for message %s: %w", turnID, message.ID, ctx.Err()),
 		)
 	}
+}
+
+func (d *Daemon) readCodexTurnMessage(ctx context.Context, codexThreadID, turnID string) (string, error) {
+	threadResp, err := d.codex.ReadThread(ctx, &codex.ThreadReadParams{
+		ThreadID:     codexThreadID,
+		IncludeTurns: true,
+	})
+	if err != nil {
+		return "", fmt.Errorf("read codex thread %s: %w", codexThreadID, err)
+	}
+	for _, turn := range threadResp.Thread.Turns {
+		if turn.ID != turnID {
+			continue
+		}
+		message, err := codexbridge.ExtractFinalAnswer(turn)
+		if err != nil {
+			return "", err
+		}
+		return message, nil
+	}
+	return "", fmt.Errorf("codex turn %s not found in thread %s", turnID, codexThreadID)
 }
 
 func (d *Daemon) ensureCodexThread(ctx context.Context, platformThreadID string) (string, error) {

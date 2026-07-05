@@ -25,6 +25,8 @@ type fakeCodexClient struct {
 	resumeParams      *codex.ThreadResumeParams
 	startTurnCtx      context.Context
 	startTurnErr      error
+	readThreadResp    *codex.ThreadReadResponse
+	readThreadErr     error
 }
 
 func (f *fakeCodexClient) StartThread(_ context.Context, params *codex.ThreadStartParams) (*codex.ThreadStartResponse, error) {
@@ -53,6 +55,16 @@ func (f *fakeCodexClient) StartTurnContext() context.Context {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.startTurnCtx
+}
+
+func (f *fakeCodexClient) ReadThread(_ context.Context, _ *codex.ThreadReadParams) (*codex.ThreadReadResponse, error) {
+	if f.readThreadErr != nil {
+		return nil, f.readThreadErr
+	}
+	if f.readThreadResp != nil {
+		return f.readThreadResp, nil
+	}
+	return &codex.ThreadReadResponse{}, nil
 }
 
 func (f *fakeCodexClient) Close() error {
@@ -289,5 +301,46 @@ func TestHandleCodexMessageWrapsTurnResultError(t *testing.T) {
 	}
 	if !errors.Is(err, turnErr) {
 		t.Fatalf("expected wrapped turn error, got %v", err)
+	}
+}
+
+func TestHandleCodexMessageReadsBackTurnMessage(t *testing.T) {
+	store := codexbridge.NewThreadMappingStore(t.TempDir())
+	client := &fakeCodexClient{readThreadResp: &codex.ThreadReadResponse{Thread: codex.Thread{Turns: []codex.Turn{{
+		ID: "turn-1",
+		Items: []codex.ThreadItem{{AgentMessage: &codex.AgentMessageThreadItem{
+			ID:   "agent-message-1",
+			Type: codex.ThreadItemTypeAgentMessage,
+			Text: "readback response",
+		}}},
+	}}}}}
+	daemon := &Daemon{
+		sdk:          SDKCodex,
+		cfg:          config.Config{AgentID: uuid.MustParse(testAgentID), WorkDir: "/tmp"},
+		codex:        client,
+		mapping:      codexbridge.NewThreadMapping(),
+		mappingStore: store,
+		tracker:      codexbridge.NewTurnTracker(),
+		agent:        &agentsv1.Agent{},
+		threads:      platform.NewThreads(&fakeClaudeThreadsClient{}),
+	}
+	message := platform.Message{ID: "msg-1", ThreadID: "thread-1", Body: "hello"}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- daemon.handleCodexMessage(context.Background(), message)
+	}()
+	turnErr := fmt.Errorf("turn missing agent message")
+	daemon.tracker.Notify(codexbridge.TurnResult{
+		ThreadID: "codex-started",
+		TurnID:   "turn-1",
+		Err:      turnErr,
+	})
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("expected readback response to recover turn result, got %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("handleCodexMessage did not finish after turn readback")
 	}
 }

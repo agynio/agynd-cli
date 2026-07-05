@@ -24,7 +24,7 @@ func TestExtractFinalAnswerFinalPhase(t *testing.T) {
 			agentMessageItem("final response", &phase),
 		},
 	}
-	got, err := extractFinalAnswer(turn)
+	got, err := ExtractFinalAnswer(turn)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -41,7 +41,7 @@ func TestExtractFinalAnswerFallback(t *testing.T) {
 			agentMessageItem("last response", nil),
 		},
 	}
-	got, err := extractFinalAnswer(turn)
+	got, err := ExtractFinalAnswer(turn)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -52,7 +52,7 @@ func TestExtractFinalAnswerFallback(t *testing.T) {
 
 func TestExtractFinalAnswerEmptyTurn(t *testing.T) {
 	turn := codex.Turn{ID: "turn-empty"}
-	got, err := extractFinalAnswer(turn)
+	got, err := ExtractFinalAnswer(turn)
 	if err == nil {
 		t.Fatal("expected error for empty turn")
 	}
@@ -73,7 +73,7 @@ func TestExtractFinalAnswerNoAgentMessages(t *testing.T) {
 			},
 		},
 	}
-	got, err := extractFinalAnswer(turn)
+	got, err := ExtractFinalAnswer(turn)
 	if err == nil {
 		t.Fatal("expected error for missing agent messages")
 	}
