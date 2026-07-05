@@ -204,6 +204,26 @@ func TestCodexEnvMergesNoProxySpellingsForZitiLLM(t *testing.T) {
 	}
 }
 
+func TestCodexEnvClearsProxyVarsForZitiLLM(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin")
+	for _, key := range codexProxyEnvVars {
+		t.Setenv(key, "http://proxy.invalid:8080")
+	}
+	cfg := config.Config{LLMBaseURL: "http://llm-proxy.ziti:443/v1"}
+
+	env := codexEnv(cfg, "/tmp/.codex", "/tmp", testCodexOTLPEndpoint)
+
+	for _, key := range codexProxyEnvVars {
+		value, ok := env[key]
+		if !ok {
+			t.Fatalf("expected %s override", key)
+		}
+		if value != "" {
+			t.Fatalf("expected %s to be cleared, got %q", key, value)
+		}
+	}
+}
+
 func TestCodexEnvDoesNotSetNoProxyForPublicLLM(t *testing.T) {
 	t.Setenv("PATH", "/usr/bin")
 	cfg := config.Config{
@@ -218,6 +238,11 @@ func TestCodexEnvDoesNotSetNoProxyForPublicLLM(t *testing.T) {
 	}
 	if _, ok := env[codexEnvNoProxyLower]; ok {
 		t.Fatalf("expected public LLM env to omit %s", codexEnvNoProxyLower)
+	}
+	for _, key := range codexProxyEnvVars {
+		if _, ok := env[key]; ok {
+			t.Fatalf("expected public LLM env to omit %s", key)
+		}
 	}
 }
 

@@ -43,6 +43,12 @@ const (
 	codexEnvOTELExporterOTLPEndpoint = "OTEL_EXPORTER_OTLP_ENDPOINT"
 	codexEnvNoProxy                  = "NO_PROXY"
 	codexEnvNoProxyLower             = "no_proxy"
+	codexEnvHTTPProxy                = "HTTP_PROXY"
+	codexEnvHTTPProxyLower           = "http_proxy"
+	codexEnvHTTPSProxy               = "HTTPS_PROXY"
+	codexEnvHTTPSProxyLower          = "https_proxy"
+	codexEnvAllProxy                 = "ALL_PROXY"
+	codexEnvAllProxyLower            = "all_proxy"
 )
 
 var codexZitiNoProxyHosts = []string{
@@ -58,6 +64,15 @@ var codexAuthEnvVars = []string{
 	codexEnvOpenAIAPIKey,
 	codexEnvCodexAPIKey,
 	codexEnvCodexAccessToken,
+}
+
+var codexProxyEnvVars = []string{
+	codexEnvHTTPProxy,
+	codexEnvHTTPProxyLower,
+	codexEnvHTTPSProxy,
+	codexEnvHTTPSProxyLower,
+	codexEnvAllProxy,
+	codexEnvAllProxyLower,
 }
 
 func writeCodexConfig(llmBaseURL string, mcpServers []config.MCPServer, otlpEndpoint string) (string, error) {
@@ -105,6 +120,9 @@ func codexEnv(cfg config.Config, codexHome, codexHomeValue, otlpEndpoint string)
 		)
 		env[codexEnvNoProxy] = noProxyValue
 		env[codexEnvNoProxyLower] = noProxyValue
+		for _, key := range codexProxyEnvVars {
+			env[key] = ""
+		}
 	} else {
 		env[codexEnvOpenAIAPIKey] = cfg.LLMAPIToken
 	}
