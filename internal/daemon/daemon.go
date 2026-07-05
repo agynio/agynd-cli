@@ -640,14 +640,21 @@ func (d *Daemon) readCodexTurnMessage(ctx context.Context, codexThreadID, turnID
 		if err == nil {
 			return message, nil
 		}
+		if !isRetryableCodexReadbackError(err) {
+			return "", err
+		}
 		lastErr = err
 
 		select {
 		case <-readbackCtx.Done():
-			return "", fmt.Errorf("read codex turn %s after completion: %w: %w", turnID, lastErr, readbackCtx.Err())
+			return "", fmt.Errorf("read codex turn %s after completion timed out after %s: %w", turnID, codexReadbackTimeout, lastErr)
 		case <-ticker.C:
 		}
 	}
+}
+
+func isRetryableCodexReadbackError(err error) bool {
+	return errors.Is(err, codexbridge.ErrMissingAgentMessage)
 }
 
 func (d *Daemon) readCodexTurnMessageOnce(ctx context.Context, codexThreadID, turnID string) (string, error) {
