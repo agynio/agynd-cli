@@ -49,7 +49,7 @@ func (b *Bridge) OnTurnCompleted(notification *codex.TurnCompletedNotification) 
 		ThreadID: notification.ThreadID,
 		TurnID:   turnID,
 	}
-	message, err := extractFinalAnswer(turn)
+	message, err := ExtractFinalAnswer(turn)
 	if err != nil {
 		result.Err = err
 	} else {
@@ -133,7 +133,7 @@ func mergeTurnItems(items []codex.ThreadItem, accumulated *turnItems) []codex.Th
 	return merged
 }
 
-func extractFinalAnswer(turn codex.Turn) (string, error) {
+func ExtractFinalAnswer(turn codex.Turn) (string, error) {
 	for _, item := range turn.Items {
 		if item.AgentMessage == nil {
 			continue

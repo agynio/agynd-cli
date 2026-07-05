@@ -22,6 +22,10 @@ func (noopCodexClient) ResumeThread(context.Context, *codex.ThreadResumeParams) 
 	return nil, nil
 }
 
+func (noopCodexClient) ReadThread(context.Context, *codex.ThreadReadParams) (*codex.ThreadReadResponse, error) {
+	return nil, nil
+}
+
 func (noopCodexClient) StartTurn(context.Context, *codex.TurnStartParams) (*codex.TurnStartResponse, error) {
 	return nil, nil
 }
