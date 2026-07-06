@@ -391,9 +391,19 @@ func (d *Daemon) Run(ctx context.Context) error {
 		backoff = nextSyncRetryBackoff(backoff)
 		scheduleRetry(delay)
 	}
+	handleSyncFailure := func(operation string, err error) error {
+		if isTerminalAgentProcessingError(err) {
+			log.Printf("%s terminal agent processing failure: %v", operation, err)
+			return err
+		}
+		scheduleFailureRetry(operation, err)
+		return nil
+	}
 
 	if err := d.syncMessages(ctx); err != nil {
-		scheduleFailureRetry("initial sync messages", err)
+		if terminalErr := handleSyncFailure("initial sync messages", err); terminalErr != nil {
+			return terminalErr
+		}
 	} else {
 		clearRetry()
 	}
@@ -404,13 +414,17 @@ func (d *Daemon) Run(ctx context.Context) error {
 			return operationError(opProcessSignalShutdown, 0, ctx.Err())
 		case <-d.subscriber.Wake():
 			if err := d.syncMessages(ctx); err != nil {
-				scheduleFailureRetry("sync messages", err)
+				if terminalErr := handleSyncFailure("sync messages", err); terminalErr != nil {
+					return terminalErr
+				}
 			} else {
 				clearRetry()
 			}
 		case <-retry:
 			if err := d.syncMessages(ctx); err != nil {
-				scheduleFailureRetry("sync messages retry", err)
+				if terminalErr := handleSyncFailure("sync messages retry", err); terminalErr != nil {
+					return terminalErr
+				}
 			} else {
 				clearRetry()
 			}
@@ -418,23 +432,58 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 }
 
+type operationFailure struct {
+	op      string
+	timeout time.Duration
+	err     error
+}
+
+type terminalCodexTurnError struct {
+	err error
+}
+
+func (e *terminalCodexTurnError) Error() string {
+	return e.err.Error()
+}
+
+func (e *terminalCodexTurnError) Unwrap() error {
+	return e.err
+}
+
+func terminalCodexTurn(err error) error {
+	return &terminalCodexTurnError{err: err}
+}
+
+func (e *operationFailure) Error() string {
+	if errors.Is(e.err, context.DeadlineExceeded) {
+		if e.timeout > 0 {
+			return fmt.Sprintf("%s timed out after %s: %v", e.op, e.timeout, e.err)
+		}
+		return fmt.Sprintf("%s timed out: %v", e.op, e.err)
+	}
+	if errors.Is(e.err, context.Canceled) {
+		return fmt.Sprintf("%s canceled: %v", e.op, e.err)
+	}
+	if e.timeout > 0 {
+		return fmt.Sprintf("%s failed (timeout %s): %v", e.op, e.timeout, e.err)
+	}
+	return fmt.Sprintf("%s failed: %v", e.op, e.err)
+}
+
+func (e *operationFailure) Unwrap() error {
+	return e.err
+}
+
 func operationError(op string, timeout time.Duration, err error) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		if timeout > 0 {
-			return fmt.Errorf("%s timed out after %s: %w", op, timeout, err)
-		}
-		return fmt.Errorf("%s timed out: %w", op, err)
-	}
-	if errors.Is(err, context.Canceled) {
-		return fmt.Errorf("%s canceled: %w", op, err)
-	}
-	if timeout > 0 {
-		return fmt.Errorf("%s failed (timeout %s): %w", op, timeout, err)
-	}
-	return fmt.Errorf("%s failed: %w", op, err)
+	return &operationFailure{op: op, timeout: timeout, err: err}
+}
+
+func isTerminalAgentProcessingError(err error) bool {
+	var terminalErr *terminalCodexTurnError
+	return errors.As(err, &terminalErr)
 }
 
 func operationContextErr(ctx context.Context, err error) error {
@@ -578,11 +627,11 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 	completionCh := d.tracker.Register(turnID)
 	select {
 	case result := <-completionCh:
-		if result.ThreadID != codexThreadID {
+		if result.ThreadID != "" && result.ThreadID != codexThreadID {
 			return operationError(
 				opCodexTurnResult,
 				0,
-				fmt.Errorf("codex turn %s thread mismatch for message %s", turnID, message.ID),
+				terminalCodexTurn(fmt.Errorf("codex turn %s thread mismatch for message %s", turnID, message.ID)),
 			)
 		}
 		if result.Err != nil {
@@ -590,15 +639,19 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 				return operationError(
 					opCodexTurnResult,
 					0,
-					fmt.Errorf("codex turn %s failed for message %s: %w", turnID, message.ID, result.Err),
+					terminalCodexTurn(fmt.Errorf("codex turn %s failed for message %s: %w", turnID, message.ID, result.Err)),
 				)
 			}
 			readbackMessage, readbackErr := d.readCodexTurnMessage(ctx, codexThreadID, turnID)
 			if readbackErr != nil {
+				turnErr := fmt.Errorf("codex turn %s failed for message %s: %w; readback failed: %w", turnID, message.ID, result.Err, readbackErr)
+				if errors.Is(readbackErr, codexbridge.ErrMissingAgentMessage) {
+					turnErr = terminalCodexTurn(turnErr)
+				}
 				return operationError(
 					opCodexTurnResult,
 					0,
-					fmt.Errorf("codex turn %s failed for message %s: %w; readback failed: %w", turnID, message.ID, result.Err, readbackErr),
+					turnErr,
 				)
 			}
 			result.Message = readbackMessage
@@ -607,7 +660,7 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 			return operationError(
 				opCodexTurnResult,
 				0,
-				fmt.Errorf("codex turn %s completed with empty response for message %s", turnID, message.ID),
+				terminalCodexTurn(fmt.Errorf("codex turn %s completed with empty response for message %s", turnID, message.ID)),
 			)
 		}
 		if err := d.publishResponse(ctx, SDKCodex, threadID, message, result.Message); err != nil {

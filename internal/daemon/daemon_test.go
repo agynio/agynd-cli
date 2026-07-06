@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	agentsv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/agents/v1"
+	"github.com/agynio/agynd-cli/internal/codexbridge"
 	"github.com/agynio/agynd-cli/internal/config"
 	"github.com/agynio/agynd-cli/internal/platform"
 	"github.com/google/uuid"
@@ -93,6 +95,33 @@ func (f *fakeMessageConsumer) Calls() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.calls
+}
+
+type handlingMessageConsumer struct {
+	mu      sync.Mutex
+	calls   int
+	message platform.Message
+	done    chan struct{}
+}
+
+func (h *handlingMessageConsumer) Sync(_ context.Context, _ string, _ string, handle func(platform.Message) error) error {
+	h.mu.Lock()
+	h.calls++
+	h.mu.Unlock()
+	err := handle(h.message)
+	if h.done != nil {
+		select {
+		case h.done <- struct{}{}:
+		default:
+		}
+	}
+	return err
+}
+
+func (h *handlingMessageConsumer) Calls() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.calls
 }
 
 type recordingRunnersClient struct {
@@ -400,6 +429,135 @@ func TestRunRetriesSyncAfterFailure(t *testing.T) {
 			t.Fatalf("expected sync retry, got %d calls", consumer.Calls())
 		case <-time.After(10 * time.Millisecond):
 		}
+	}
+	cancel()
+	select {
+	case <-errCh:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Run did not stop")
+	}
+}
+
+func TestRunReturnsTerminalCodexTurnFailureWithoutRetry(t *testing.T) {
+	subscriber := newFakeMessageSubscriber()
+	consumer := &handlingMessageConsumer{message: platform.Message{ID: "msg-1", ThreadID: "thread-1", Body: "hello"}}
+	store := codexbridge.NewThreadMappingStore(t.TempDir())
+	client := &fakeCodexClient{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	daemon := &Daemon{
+		sdk:          SDKCodex,
+		cfg:          config.Config{AgentID: uuid.MustParse(testAgentID), WorkDir: "/tmp"},
+		runners:      &fakeRunnersClient{},
+		subscriber:   subscriber,
+		consumer:     consumer,
+		codex:        client,
+		mapping:      codexbridge.NewThreadMapping(),
+		mappingStore: store,
+		tracker:      codexbridge.NewTurnTracker(),
+		agent:        &agentsv1.Agent{},
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- daemon.Run(ctx)
+	}()
+
+	deadline := time.After(500 * time.Millisecond)
+	for client.StartTurnContext() == nil {
+		select {
+		case err := <-errCh:
+			t.Fatalf("Run returned before codex turn started: %v", err)
+		case <-deadline:
+			t.Fatal("codex turn did not start")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	turnErr := &codexbridge.ErrorNotificationError{
+		ThreadID: "codex-started",
+		TurnID:   "turn-1",
+		Message:  "failed to read body",
+	}
+	daemon.tracker.Notify(codexbridge.TurnResult{ThreadID: "codex-started", TurnID: "turn-1", Err: turnErr})
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected terminal error, got nil")
+		}
+		for _, expected := range []string{"codex_turn_result", "failed to read body", "msg-1", "turn-1"} {
+			if !strings.Contains(err.Error(), expected) {
+				t.Fatalf("expected %q in error: %v", expected, err)
+			}
+		}
+		if !errors.Is(err, turnErr) {
+			t.Fatalf("expected wrapped terminal turn error, got %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Run did not return terminal codex turn failure")
+	}
+	if calls := consumer.Calls(); calls != 1 {
+		t.Fatalf("expected terminal failure to avoid retry, got %d sync calls", calls)
+	}
+}
+
+func TestRunRetriesReadbackTransportFailure(t *testing.T) {
+	subscriber := newFakeMessageSubscriber()
+	consumer := &handlingMessageConsumer{
+		message: platform.Message{ID: "msg-1", ThreadID: "thread-1", Body: "hello"},
+		done:    make(chan struct{}, 2),
+	}
+	store := codexbridge.NewThreadMappingStore(t.TempDir())
+	readErr := fmt.Errorf("read transport unavailable")
+	client := &fakeCodexClient{readThreadErr: readErr}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d := &Daemon{
+		sdk:          SDKCodex,
+		cfg:          config.Config{AgentID: uuid.MustParse(testAgentID), WorkDir: "/tmp"},
+		runners:      &fakeRunnersClient{},
+		subscriber:   subscriber,
+		consumer:     consumer,
+		codex:        client,
+		mapping:      codexbridge.NewThreadMapping(),
+		mappingStore: store,
+		tracker:      codexbridge.NewTurnTracker(),
+		agent:        &agentsv1.Agent{},
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- d.Run(ctx)
+	}()
+
+	waitForStartTurn := func() {
+		t.Helper()
+		deadline := time.After(500 * time.Millisecond)
+		for client.StartTurnContext() == nil {
+			select {
+			case err := <-errCh:
+				t.Fatalf("Run returned before codex turn started: %v", err)
+			case <-deadline:
+				t.Fatal("codex turn did not start")
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+	}
+	waitForStartTurn()
+	d.tracker.Notify(codexbridge.TurnResult{ThreadID: "codex-started", TurnID: "turn-1", Err: codexbridge.ErrMissingAgentMessage})
+
+	select {
+	case <-consumer.done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("first sync did not finish")
+	}
+	select {
+	case err := <-errCh:
+		t.Fatalf("Run returned instead of retrying readback transport failure: %v", err)
+	case <-time.After(1100 * time.Millisecond):
+	}
+	if calls := consumer.Calls(); calls < 2 {
+		t.Fatalf("expected readback transport failure to retry sync, got %d calls", calls)
 	}
 	cancel()
 	select {
