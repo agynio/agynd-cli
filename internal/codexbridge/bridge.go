@@ -18,6 +18,22 @@ type Bridge struct {
 
 var ErrMissingAgentMessage = errors.New("missing agent message")
 
+type ErrorNotificationError struct {
+	ThreadID  string
+	TurnID    string
+	Message   string
+	WillRetry bool
+	Details   string
+}
+
+func (e *ErrorNotificationError) Error() string {
+	base := fmt.Sprintf("codex error notification for turn %s on thread %s: %s", e.TurnID, e.ThreadID, e.Message)
+	if e.Details == "" {
+		return base
+	}
+	return base + ": " + e.Details
+}
+
 type turnItems struct {
 	items         []codex.ThreadItem
 	agentMessages map[string]string
@@ -93,7 +109,32 @@ func (b *Bridge) OnError(notification *codex.ErrorNotification) {
 	if notification == nil {
 		return
 	}
-	log.Printf("codex bridge: error notification: %s", notification.Error.Message)
+	details := ""
+	if notification.Error.AdditionalDetails != nil {
+		details = *notification.Error.AdditionalDetails
+	}
+	log.Printf(
+		"codex bridge: error notification: thread_id=%s turn_id=%s will_retry=%t message=%s details=%s",
+		notification.ThreadID,
+		notification.TurnID,
+		notification.WillRetry,
+		notification.Error.Message,
+		details,
+	)
+	if notification.WillRetry || notification.TurnID == "" {
+		return
+	}
+	b.tracker.Notify(TurnResult{
+		ThreadID: notification.ThreadID,
+		TurnID:   notification.TurnID,
+		Err: &ErrorNotificationError{
+			ThreadID:  notification.ThreadID,
+			TurnID:    notification.TurnID,
+			Message:   notification.Error.Message,
+			WillRetry: notification.WillRetry,
+			Details:   details,
+		},
+	})
 }
 
 func (b *Bridge) OnNotification(string, json.RawMessage) {}

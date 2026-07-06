@@ -391,9 +391,19 @@ func (d *Daemon) Run(ctx context.Context) error {
 		backoff = nextSyncRetryBackoff(backoff)
 		scheduleRetry(delay)
 	}
+	handleSyncFailure := func(operation string, err error) error {
+		if isTerminalAgentProcessingError(err) {
+			log.Printf("%s terminal agent processing failure: %v", operation, err)
+			return err
+		}
+		scheduleFailureRetry(operation, err)
+		return nil
+	}
 
 	if err := d.syncMessages(ctx); err != nil {
-		scheduleFailureRetry("initial sync messages", err)
+		if terminalErr := handleSyncFailure("initial sync messages", err); terminalErr != nil {
+			return terminalErr
+		}
 	} else {
 		clearRetry()
 	}
@@ -404,13 +414,17 @@ func (d *Daemon) Run(ctx context.Context) error {
 			return operationError(opProcessSignalShutdown, 0, ctx.Err())
 		case <-d.subscriber.Wake():
 			if err := d.syncMessages(ctx); err != nil {
-				scheduleFailureRetry("sync messages", err)
+				if terminalErr := handleSyncFailure("sync messages", err); terminalErr != nil {
+					return terminalErr
+				}
 			} else {
 				clearRetry()
 			}
 		case <-retry:
 			if err := d.syncMessages(ctx); err != nil {
-				scheduleFailureRetry("sync messages retry", err)
+				if terminalErr := handleSyncFailure("sync messages retry", err); terminalErr != nil {
+					return terminalErr
+				}
 			} else {
 				clearRetry()
 			}
@@ -418,23 +432,42 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 }
 
+type operationFailure struct {
+	op      string
+	timeout time.Duration
+	err     error
+}
+
+func (e *operationFailure) Error() string {
+	if errors.Is(e.err, context.DeadlineExceeded) {
+		if e.timeout > 0 {
+			return fmt.Sprintf("%s timed out after %s: %v", e.op, e.timeout, e.err)
+		}
+		return fmt.Sprintf("%s timed out: %v", e.op, e.err)
+	}
+	if errors.Is(e.err, context.Canceled) {
+		return fmt.Sprintf("%s canceled: %v", e.op, e.err)
+	}
+	if e.timeout > 0 {
+		return fmt.Sprintf("%s failed (timeout %s): %v", e.op, e.timeout, e.err)
+	}
+	return fmt.Sprintf("%s failed: %v", e.op, e.err)
+}
+
+func (e *operationFailure) Unwrap() error {
+	return e.err
+}
+
 func operationError(op string, timeout time.Duration, err error) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		if timeout > 0 {
-			return fmt.Errorf("%s timed out after %s: %w", op, timeout, err)
-		}
-		return fmt.Errorf("%s timed out: %w", op, err)
-	}
-	if errors.Is(err, context.Canceled) {
-		return fmt.Errorf("%s canceled: %w", op, err)
-	}
-	if timeout > 0 {
-		return fmt.Errorf("%s failed (timeout %s): %w", op, timeout, err)
-	}
-	return fmt.Errorf("%s failed: %w", op, err)
+	return &operationFailure{op: op, timeout: timeout, err: err}
+}
+
+func isTerminalAgentProcessingError(err error) bool {
+	var failure *operationFailure
+	return errors.As(err, &failure) && failure.op == opCodexTurnResult
 }
 
 func operationContextErr(ctx context.Context, err error) error {
