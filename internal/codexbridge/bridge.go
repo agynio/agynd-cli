@@ -26,6 +26,10 @@ type ErrorNotificationError struct {
 	Details   string
 }
 
+func (e *ErrorNotificationError) SetTurnID(turnID string) {
+	e.TurnID = turnID
+}
+
 func (e *ErrorNotificationError) Error() string {
 	base := fmt.Sprintf("codex error notification for turn %s on thread %s: %s", e.TurnID, e.ThreadID, e.Message)
 	if e.Details == "" {
@@ -121,20 +125,24 @@ func (b *Bridge) OnError(notification *codex.ErrorNotification) {
 		notification.Error.Message,
 		details,
 	)
-	if notification.WillRetry || notification.TurnID == "" {
+	if notification.WillRetry {
 		return
 	}
-	b.tracker.Notify(TurnResult{
-		ThreadID: notification.ThreadID,
-		TurnID:   notification.TurnID,
-		Err: &ErrorNotificationError{
-			ThreadID:  notification.ThreadID,
-			TurnID:    notification.TurnID,
-			Message:   notification.Error.Message,
-			WillRetry: notification.WillRetry,
-			Details:   details,
-		},
-	})
+	err := &ErrorNotificationError{
+		ThreadID:  notification.ThreadID,
+		TurnID:    notification.TurnID,
+		Message:   notification.Error.Message,
+		WillRetry: notification.WillRetry,
+		Details:   details,
+	}
+	result := TurnResult{ThreadID: notification.ThreadID, TurnID: notification.TurnID, Err: err}
+	if notification.TurnID == "" {
+		if !b.tracker.NotifyActive(result) {
+			log.Printf("codex bridge: terminal error notification had no active turn waiter")
+		}
+		return
+	}
+	b.tracker.Notify(result)
 }
 
 func (b *Bridge) OnNotification(string, json.RawMessage) {}

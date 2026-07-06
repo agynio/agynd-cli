@@ -438,6 +438,22 @@ type operationFailure struct {
 	err     error
 }
 
+type terminalCodexTurnError struct {
+	err error
+}
+
+func (e *terminalCodexTurnError) Error() string {
+	return e.err.Error()
+}
+
+func (e *terminalCodexTurnError) Unwrap() error {
+	return e.err
+}
+
+func terminalCodexTurn(err error) error {
+	return &terminalCodexTurnError{err: err}
+}
+
 func (e *operationFailure) Error() string {
 	if errors.Is(e.err, context.DeadlineExceeded) {
 		if e.timeout > 0 {
@@ -466,8 +482,8 @@ func operationError(op string, timeout time.Duration, err error) error {
 }
 
 func isTerminalAgentProcessingError(err error) bool {
-	var failure *operationFailure
-	return errors.As(err, &failure) && failure.op == opCodexTurnResult
+	var terminalErr *terminalCodexTurnError
+	return errors.As(err, &terminalErr)
 }
 
 func operationContextErr(ctx context.Context, err error) error {
@@ -611,11 +627,11 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 	completionCh := d.tracker.Register(turnID)
 	select {
 	case result := <-completionCh:
-		if result.ThreadID != codexThreadID {
+		if result.ThreadID != "" && result.ThreadID != codexThreadID {
 			return operationError(
 				opCodexTurnResult,
 				0,
-				fmt.Errorf("codex turn %s thread mismatch for message %s", turnID, message.ID),
+				terminalCodexTurn(fmt.Errorf("codex turn %s thread mismatch for message %s", turnID, message.ID)),
 			)
 		}
 		if result.Err != nil {
@@ -623,15 +639,19 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 				return operationError(
 					opCodexTurnResult,
 					0,
-					fmt.Errorf("codex turn %s failed for message %s: %w", turnID, message.ID, result.Err),
+					terminalCodexTurn(fmt.Errorf("codex turn %s failed for message %s: %w", turnID, message.ID, result.Err)),
 				)
 			}
 			readbackMessage, readbackErr := d.readCodexTurnMessage(ctx, codexThreadID, turnID)
 			if readbackErr != nil {
+				turnErr := fmt.Errorf("codex turn %s failed for message %s: %w; readback failed: %w", turnID, message.ID, result.Err, readbackErr)
+				if errors.Is(readbackErr, codexbridge.ErrMissingAgentMessage) {
+					turnErr = terminalCodexTurn(turnErr)
+				}
 				return operationError(
 					opCodexTurnResult,
 					0,
-					fmt.Errorf("codex turn %s failed for message %s: %w; readback failed: %w", turnID, message.ID, result.Err, readbackErr),
+					turnErr,
 				)
 			}
 			result.Message = readbackMessage
@@ -640,7 +660,7 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 			return operationError(
 				opCodexTurnResult,
 				0,
-				fmt.Errorf("codex turn %s completed with empty response for message %s", turnID, message.ID),
+				terminalCodexTurn(fmt.Errorf("codex turn %s completed with empty response for message %s", turnID, message.ID)),
 			)
 		}
 		if err := d.publishResponse(ctx, SDKCodex, threadID, message, result.Message); err != nil {

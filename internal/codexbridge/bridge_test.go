@@ -186,6 +186,31 @@ func TestBridgeTerminalErrorNotificationCompletesTurn(t *testing.T) {
 	assertClosed(t, ch)
 }
 
+func TestBridgeTerminalErrorNotificationWithoutTurnCompletesActiveTurn(t *testing.T) {
+	tracker := NewTurnTracker()
+	bridge := New(tracker)
+	ch := tracker.Register("turn-active")
+
+	bridge.OnError(&codex.ErrorNotification{
+		ThreadID:  "thread-1",
+		Error:     codex.TurnError{Message: "failed to read body"},
+		WillRetry: false,
+	})
+
+	result := receiveResult(t, ch)
+	if result.TurnID != "turn-active" {
+		t.Fatalf("expected active turn id, got %q", result.TurnID)
+	}
+	var notificationErr *ErrorNotificationError
+	if !errors.As(result.Err, &notificationErr) {
+		t.Fatalf("expected ErrorNotificationError, got %T", result.Err)
+	}
+	if notificationErr.TurnID != "turn-active" {
+		t.Fatalf("expected error turn id to be set, got %q", notificationErr.TurnID)
+	}
+	assertClosed(t, ch)
+}
+
 func TestBridgeRetryingErrorNotificationDoesNotCompleteTurn(t *testing.T) {
 	tracker := NewTurnTracker()
 	bridge := New(tracker)
