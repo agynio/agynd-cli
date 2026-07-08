@@ -3,8 +3,11 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
+	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -12,10 +15,8 @@ import (
 )
 
 func TestWaitForMCPServersReady(t *testing.T) {
-	listenerA, portA := startTCPListener(t)
-	defer listenerA.Close()
-	listenerB, portB := startTCPListener(t)
-	defer listenerB.Close()
+	_, portA := startMCPReadyServer(t)
+	_, portB := startMCPReadyServer(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
@@ -26,6 +27,78 @@ func TestWaitForMCPServersReady(t *testing.T) {
 	}
 	if err := waitForMCPServers(ctx, servers, 500*time.Millisecond); err != nil {
 		t.Fatalf("expected MCP servers to be ready, got %v", err)
+	}
+}
+
+func TestWaitForMCPServersWaitsForInitializeResponse(t *testing.T) {
+	var requests atomic.Int32
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempt := requests.Add(1)
+		if attempt < 3 {
+			http.Error(w, "starting", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"agynd-mcp-ready","result":{"protocolVersion":"2025-06-18"}}`))
+	})}
+	listener, port := startHTTPListener(t, server)
+	defer listener.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	servers := []config.MCPServer{{Name: "memory", Port: port}}
+	if err := waitForMCPServers(ctx, servers, 5*time.Second); err != nil {
+		t.Fatalf("expected MCP server to become ready, got %v", err)
+	}
+	if got := requests.Load(); got < 3 {
+		t.Fatalf("expected readiness probe retries, got %d request(s)", got)
+	}
+}
+
+func TestReadMCPProbeResultRejectsInvalidPayloads(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload string
+	}{
+		{
+			name:    "json rpc error containing result text",
+			payload: `{"jsonrpc":"2.0","id":"agynd-mcp-ready","error":{"message":"no result yet"}}`,
+		},
+		{
+			name:    "unrelated payload containing result text",
+			payload: `{"message":"result is almost ready"}`,
+		},
+		{
+			name:    "wrong response id",
+			payload: `{"jsonrpc":"2.0","id":"other","result":{"protocolVersion":"2025-06-18"}}`,
+		},
+		{
+			name:    "null result",
+			payload: `{"jsonrpc":"2.0","id":"agynd-mcp-ready","result":null}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := readMCPProbeResult(strings.NewReader(tt.payload)); err == nil {
+				t.Fatal("expected invalid MCP initialize response to be rejected")
+			}
+		})
+	}
+}
+
+func TestReadMCPProbeResultAcceptsSSEInitializeResult(t *testing.T) {
+	payload := strings.Join([]string{
+		`event: message`,
+		`data: {"jsonrpc":"2.0","id":"unrelated","result":{"protocolVersion":"2025-06-18"}}`,
+		``,
+		`event: message`,
+		`data: {"jsonrpc":"2.0","id":"agynd-mcp-ready","result":{"protocolVersion":"2025-06-18"}}`,
+		``,
+	}, "\n")
+
+	if err := readMCPProbeResult(strings.NewReader(payload)); err != nil {
+		t.Fatalf("expected SSE initialize result to be accepted, got %v", err)
 	}
 }
 
@@ -74,6 +147,39 @@ func startTCPListener(t *testing.T) (net.Listener, int) {
 		_ = listener.Close()
 		t.Fatalf("unexpected listener address type %T", listener.Addr())
 	}
+	return listener, addr.Port
+}
+
+func startMCPReadyServer(t *testing.T) (*http.Server, int) {
+	t.Helper()
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/mcp" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"agynd-mcp-ready","result":{"protocolVersion":"2025-06-18"}}`))
+	})}
+	listener, port := startHTTPListener(t, server)
+	t.Cleanup(func() { _ = listener.Close() })
+	return server, port
+}
+
+func startHTTPListener(t *testing.T, server *http.Server) (net.Listener, int) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		_ = listener.Close()
+		t.Fatalf("unexpected listener address type %T", listener.Addr())
+	}
+	go func() {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) && !strings.Contains(err.Error(), "use of closed network connection") {
+			panic(fmt.Sprintf("serve MCP ready test server: %v", err))
+		}
+	}()
 	return listener, addr.Port
 }
 

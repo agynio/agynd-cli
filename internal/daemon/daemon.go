@@ -1,11 +1,16 @@
 package daemon
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -30,7 +35,7 @@ const (
 	turnStartTimeout                = 5 * time.Minute
 	messagePublishTimeout           = 15 * time.Second
 	messageAckTimeout               = 15 * time.Second
-	mcpReadyTimeout                 = 120 * time.Second
+	mcpReadyTimeout                 = 4 * time.Minute
 	llmReadyTimeout                 = 120 * time.Second
 	codexReadbackTimeout            = 10 * time.Second
 	codexReadbackPollInterval       = 250 * time.Millisecond
@@ -47,6 +52,7 @@ const (
 	opClaudeTurn                    = "claude_turn"
 	opProcessSignalShutdown         = "process_signal/shutdown"
 	tracingProxyListenAddress       = "127.0.0.1:0"
+	mcpLoopbackHost                 = "127.0.0.1"
 )
 
 const (
@@ -54,6 +60,8 @@ const (
 	SDKAgn    = "agn"
 	SDKClaude = "claude"
 )
+
+const mcpProbeID = "agynd-mcp-ready"
 
 type Daemon struct {
 	cfg           config.Config
@@ -74,6 +82,8 @@ type Daemon struct {
 	tracingProxy  *tracingproxy.Proxy
 	claudeReadyMu sync.Mutex
 	claudeReady   bool
+	mcpReadyMu    sync.Mutex
+	mcpReady      bool
 
 	processing     atomic.Bool
 	processingWake chan struct{}
@@ -566,6 +576,9 @@ func (d *Daemon) syncMessages(ctx context.Context) error {
 		if d.tracingProxy != nil {
 			d.tracingProxy.SetMessageID(message.ID)
 		}
+		if err := d.ensureMCPReady(ctx); err != nil {
+			return fmt.Errorf("wait for MCP servers before processing message %s: %w", message.ID, err)
+		}
 		return d.handleMessage(ctx, message)
 	}); err != nil {
 		var pageFetchErr *platform.PageFetchError
@@ -578,6 +591,19 @@ func (d *Daemon) syncMessages(ctx context.Context) error {
 			fmt.Errorf("sync unacked messages for participant %s thread %s: %w", d.cfg.AgentID.String(), d.cfg.ThreadID, pageFetchErr),
 		)
 	}
+	return nil
+}
+
+func (d *Daemon) ensureMCPReady(ctx context.Context) error {
+	d.mcpReadyMu.Lock()
+	defer d.mcpReadyMu.Unlock()
+	if d.mcpReady {
+		return nil
+	}
+	if err := waitForMCPServers(ctx, d.cfg.MCPServers, mcpReadyTimeout); err != nil {
+		return err
+	}
+	d.mcpReady = true
 	return nil
 }
 
@@ -744,9 +770,6 @@ func (d *Daemon) ensureCodexThread(ctx context.Context, platformThreadID string)
 		}
 		return record.CodexThreadID, nil
 	}
-	if err := waitForMCPServers(ctx, d.cfg.MCPServers, mcpReadyTimeout); err != nil {
-		return "", fmt.Errorf("wait for MCP servers before codex thread: %w", err)
-	}
 	record, ok, err := d.mappingStore.Load(platformThreadID)
 	if err != nil {
 		return "", fmt.Errorf("load codex thread mapping for platform thread %s: %w", platformThreadID, err)
@@ -822,6 +845,12 @@ type tcpServiceTarget struct {
 	addr  string
 }
 
+type mcpServiceTarget struct {
+	label string
+	addr  string
+	url   string
+}
+
 func waitForTCPService(ctx context.Context, addr string, timeout time.Duration, label string) error {
 	return waitForTCPServices(ctx, []tcpServiceTarget{{label: label, addr: addr}}, timeout)
 }
@@ -839,6 +868,7 @@ func waitForTCPServices(ctx context.Context, targets []tcpServiceTarget, timeout
 			conn, err := net.DialTimeout("tcp", target.addr, 1*time.Second)
 			if err == nil {
 				_ = conn.Close()
+				log.Printf("%s at %s ready after %d attempt(s)", target.label, target.addr, attempt)
 				break
 			}
 			log.Printf("waiting for %s at %s (attempt %d): %v", target.label, target.addr, attempt, err)
@@ -855,14 +885,151 @@ func waitForTCPServices(ctx context.Context, targets []tcpServiceTarget, timeout
 }
 
 func waitForMCPServers(ctx context.Context, servers []config.MCPServer, timeout time.Duration) error {
-	targets := make([]tcpServiceTarget, 0, len(servers))
+	targets := make([]mcpServiceTarget, 0, len(servers))
 	for _, server := range servers {
-		targets = append(targets, tcpServiceTarget{
+		addr := net.JoinHostPort(mcpLoopbackHost, fmt.Sprintf("%d", server.Port))
+		targets = append(targets, mcpServiceTarget{
 			label: fmt.Sprintf("MCP server %s", server.Name),
-			addr:  fmt.Sprintf("localhost:%d", server.Port),
+			addr:  addr,
+			url:   mcpEndpoint(server.Port),
 		})
 	}
-	return waitForTCPServices(ctx, targets, timeout)
+	return waitForMCPServices(ctx, targets, timeout)
+}
+
+func mcpEndpoint(port int) string {
+	return fmt.Sprintf("http://%s/mcp", net.JoinHostPort(mcpLoopbackHost, fmt.Sprintf("%d", port)))
+}
+
+func waitForMCPServices(ctx context.Context, targets []mcpServiceTarget, timeout time.Duration) error {
+	if len(targets) == 0 {
+		return nil
+	}
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	client := &http.Client{Timeout: 10 * time.Second}
+	for _, target := range targets {
+		attempt := 0
+		for {
+			attempt++
+			if err := probeMCPService(ctx, client, target.url); err == nil {
+				log.Printf("%s at %s ready after %d attempt(s)", target.label, target.addr, attempt)
+				break
+			} else {
+				log.Printf("waiting for %s at %s (attempt %d): %v", target.label, target.addr, attempt, err)
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-deadline.C:
+				return fmt.Errorf("%s at %s not ready after %s", target.label, target.addr, timeout)
+			case <-time.After(2 * time.Second):
+			}
+		}
+	}
+	return nil
+}
+
+func probeMCPService(ctx context.Context, client *http.Client, endpoint string) error {
+	body := []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"agynd","version":"mcp-ready"}}}`, mcpProbeID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("http status %s", resp.Status)
+	}
+	return readMCPProbeResult(resp.Body)
+}
+
+type mcpProbeResponse struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      string          `json:"id"`
+	Result  json.RawMessage `json:"result"`
+	Error   json.RawMessage `json:"error"`
+}
+
+func readMCPProbeResult(body io.Reader) error {
+	reader := bufio.NewReader(io.LimitReader(body, 64*1024))
+	var raw bytes.Buffer
+	var eventData []string
+	var lastEventErr error
+	sawSSE := false
+
+	for {
+		line, err := reader.ReadString('\n')
+		if line != "" {
+			raw.WriteString(line)
+			trimmed := strings.TrimRight(line, "\r\n")
+			if data, ok := strings.CutPrefix(trimmed, "data:"); ok {
+				sawSSE = true
+				eventData = append(eventData, strings.TrimSpace(data))
+			} else if sawSSE && strings.TrimSpace(trimmed) == "" {
+				if len(eventData) > 0 {
+					if err := validateMCPProbePayload([]byte(strings.Join(eventData, "\n"))); err == nil {
+						return nil
+					} else {
+						lastEventErr = err
+					}
+				}
+				eventData = nil
+			}
+		}
+		if err == nil {
+			continue
+		}
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		return err
+	}
+
+	if sawSSE {
+		if len(eventData) > 0 {
+			if err := validateMCPProbePayload([]byte(strings.Join(eventData, "\n"))); err == nil {
+				return nil
+			} else {
+				lastEventErr = err
+			}
+		}
+		if lastEventErr != nil {
+			return lastEventErr
+		}
+		return fmt.Errorf("initialize SSE response missing data")
+	}
+	return validateMCPProbePayload(raw.Bytes())
+}
+
+func validateMCPProbePayload(payload []byte) error {
+	payload = bytes.TrimSpace(payload)
+	if len(payload) == 0 {
+		return fmt.Errorf("initialize response is empty")
+	}
+	var response mcpProbeResponse
+	if err := json.Unmarshal(payload, &response); err != nil {
+		return fmt.Errorf("parse initialize response: %w", err)
+	}
+	if response.JSONRPC != "2.0" {
+		return fmt.Errorf("initialize response jsonrpc %q does not match 2.0", response.JSONRPC)
+	}
+	if response.ID != mcpProbeID {
+		return fmt.Errorf("initialize response id %q does not match %q", response.ID, mcpProbeID)
+	}
+	if len(bytes.TrimSpace(response.Error)) > 0 && !bytes.Equal(bytes.TrimSpace(response.Error), []byte("null")) {
+		return fmt.Errorf("initialize response contains error")
+	}
+	result := bytes.TrimSpace(response.Result)
+	if len(result) == 0 || bytes.Equal(result, []byte("null")) {
+		return fmt.Errorf("initialize response missing result")
+	}
+	return nil
 }
 
 type codexThreadDefaults struct {

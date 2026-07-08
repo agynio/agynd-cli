@@ -115,8 +115,8 @@ func TestWriteClaudeSettingsWithMCPServers(t *testing.T) {
 			"DISABLE_AUTOUPDATER":                      "1",
 		},
 		MCPServers: map[string]claudeMCPServer{
-			"memory": {Type: "http", URL: "http://localhost:8100/mcp"},
-			"cache":  {Type: "http", URL: "http://localhost:8200/mcp"},
+			"memory": {Type: "http", URL: "http://127.0.0.1:8100/mcp"},
+			"cache":  {Type: "http", URL: "http://127.0.0.1:8200/mcp"},
 		},
 	}
 	if !reflect.DeepEqual(got, expected) {

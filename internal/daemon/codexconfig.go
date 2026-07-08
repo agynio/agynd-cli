@@ -103,7 +103,7 @@ func codexConfig(llmBaseURL string, mcpServers []config.MCPServer, otlpEndpoint 
 	var builder strings.Builder
 	builder.WriteString(payload)
 	for _, server := range mcpServers {
-		url := fmt.Sprintf("http://localhost:%d/mcp", server.Port)
+		url := mcpEndpoint(server.Port)
 		fmt.Fprintf(&builder, "\n[mcp_servers.%s]\nurl = %q\nrequired = true\nstartup_timeout_sec = 120\n", server.Name, url)
 	}
 	return builder.String()

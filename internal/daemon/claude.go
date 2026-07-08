@@ -103,7 +103,7 @@ func (d *Daemon) ensureClaudeReady(ctx context.Context) error {
 	if d.claudeReady {
 		return nil
 	}
-	if err := waitForMCPServers(ctx, d.cfg.MCPServers, mcpReadyTimeout); err != nil {
+	if err := d.ensureMCPReady(ctx); err != nil {
 		return err
 	}
 	d.claudeReady = true

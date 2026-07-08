@@ -62,7 +62,7 @@ func agnConfig(llmBaseURL, apiKey, model, tokenCountingAddress, systemPrompt str
 	if len(mcpServers) > 0 {
 		builder.WriteString("mcp:\n  servers:\n")
 		for _, server := range mcpServers {
-			url := fmt.Sprintf("http://localhost:%d/mcp", server.Port)
+			url := mcpEndpoint(server.Port)
 			fmt.Fprintf(&builder, "    %s:\n      url: %s\n", server.Name, url)
 		}
 	}
