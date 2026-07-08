@@ -110,8 +110,8 @@ func TestWriteAgnConfigWithMCPServers(t *testing.T) {
 
 	expected := fmt.Sprintf(agnConfigTemplate, baseURL, apiKey, model, testTokenCountingAddress) +
 		"mcp:\n  servers:\n" +
-		"    memory:\n      url: http://localhost:8100/mcp\n" +
-		"    filesystem:\n      url: http://localhost:8200/mcp\n"
+		"    memory:\n      url: http://127.0.0.1:8100/mcp\n" +
+		"    filesystem:\n      url: http://127.0.0.1:8200/mcp\n"
 	if string(content) != expected {
 		t.Fatalf("expected config %q, got %q", expected, string(content))
 	}

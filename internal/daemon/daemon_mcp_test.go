@@ -3,8 +3,11 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
+	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -12,10 +15,8 @@ import (
 )
 
 func TestWaitForMCPServersReady(t *testing.T) {
-	listenerA, portA := startTCPListener(t)
-	defer listenerA.Close()
-	listenerB, portB := startTCPListener(t)
-	defer listenerB.Close()
+	_, portA := startMCPReadyServer(t)
+	_, portB := startMCPReadyServer(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
@@ -26,6 +27,31 @@ func TestWaitForMCPServersReady(t *testing.T) {
 	}
 	if err := waitForMCPServers(ctx, servers, 500*time.Millisecond); err != nil {
 		t.Fatalf("expected MCP servers to be ready, got %v", err)
+	}
+}
+
+func TestWaitForMCPServersWaitsForInitializeResponse(t *testing.T) {
+	var requests atomic.Int32
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempt := requests.Add(1)
+		if attempt < 3 {
+			http.Error(w, "starting", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"agynd-mcp-ready","result":{"protocolVersion":"2025-06-18"}}`))
+	})}
+	listener, port := startHTTPListener(t, server)
+	defer listener.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	servers := []config.MCPServer{{Name: "memory", Port: port}}
+	if err := waitForMCPServers(ctx, servers, 5*time.Second); err != nil {
+		t.Fatalf("expected MCP server to become ready, got %v", err)
+	}
+	if got := requests.Load(); got < 3 {
+		t.Fatalf("expected readiness probe retries, got %d request(s)", got)
 	}
 }
 
@@ -74,6 +100,39 @@ func startTCPListener(t *testing.T) (net.Listener, int) {
 		_ = listener.Close()
 		t.Fatalf("unexpected listener address type %T", listener.Addr())
 	}
+	return listener, addr.Port
+}
+
+func startMCPReadyServer(t *testing.T) (*http.Server, int) {
+	t.Helper()
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/mcp" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"agynd-mcp-ready","result":{"protocolVersion":"2025-06-18"}}`))
+	})}
+	listener, port := startHTTPListener(t, server)
+	t.Cleanup(func() { _ = listener.Close() })
+	return server, port
+}
+
+func startHTTPListener(t *testing.T, server *http.Server) (net.Listener, int) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		_ = listener.Close()
+		t.Fatalf("unexpected listener address type %T", listener.Addr())
+	}
+	go func() {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) && !strings.Contains(err.Error(), "use of closed network connection") {
+			panic(fmt.Sprintf("serve MCP ready test server: %v", err))
+		}
+	}()
 	return listener, addr.Port
 }
 

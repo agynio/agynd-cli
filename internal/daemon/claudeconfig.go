@@ -68,7 +68,7 @@ func writeClaudeSettings(llmBaseURL, apiKey string, mcpServers []config.MCPServe
 		for _, server := range mcpServers {
 			settings.MCPServers[server.Name] = claudeMCPServer{
 				Type: "http",
-				URL:  fmt.Sprintf("http://localhost:%d/mcp", server.Port),
+				URL:  mcpEndpoint(server.Port),
 			}
 		}
 	}

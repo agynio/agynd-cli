@@ -95,6 +95,7 @@ func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daem
 		agn:          agnClient,
 		agent:        setup.agent,
 		tracingProxy: tracingProxy,
+		mcpReady:     true,
 	}, nil
 }
 

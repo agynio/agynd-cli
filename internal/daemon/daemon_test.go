@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -564,6 +566,38 @@ func TestRunRetriesReadbackTransportFailure(t *testing.T) {
 	case <-errCh:
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("Run did not stop")
+	}
+}
+
+func TestSyncMessagesWaitsForMCPReadyBeforeHandling(t *testing.T) {
+	var requests atomic.Int32
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempt := requests.Add(1)
+		if attempt < 3 {
+			http.Error(w, "starting", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"agynd-mcp-ready","result":{"protocolVersion":"2025-06-18"}}`))
+	})}
+	listener, port := startHTTPListener(t, server)
+	defer listener.Close()
+
+	consumer := &handlingMessageConsumer{message: platform.Message{ID: "msg-1", ThreadID: "thread-1", Body: "hello"}}
+	daemon := &Daemon{
+		sdk:      "unknown",
+		cfg:      config.Config{AgentID: uuid.MustParse(testAgentID), MCPServers: []config.MCPServer{{Name: "memory", Port: port}}},
+		consumer: consumer,
+	}
+
+	err := daemon.syncMessages(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "unknown sdk") {
+		t.Fatalf("expected handler to run after MCP readiness, got %v", err)
+	}
+	if got := requests.Load(); got < 3 {
+		t.Fatalf("expected MCP readiness retries before handling, got %d request(s)", got)
+	}
+	if calls := consumer.Calls(); calls != 1 {
+		t.Fatalf("expected one sync call, got %d", calls)
 	}
 }
 

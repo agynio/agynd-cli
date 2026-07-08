@@ -138,11 +138,11 @@ func TestWriteCodexConfigWithMCPServers(t *testing.T) {
 
 	expected := codexConfigWithAPIKey(baseURL) +
 		"\n[mcp_servers.memory]\n" +
-		"url = \"http://localhost:8100/mcp\"\n" +
+		"url = \"http://127.0.0.1:8100/mcp\"\n" +
 		"required = true\n" +
 		"startup_timeout_sec = 120\n" +
 		"\n[mcp_servers.cache]\n" +
-		"url = \"http://localhost:8200/mcp\"\n" +
+		"url = \"http://127.0.0.1:8200/mcp\"\n" +
 		"required = true\n" +
 		"startup_timeout_sec = 120\n"
 	if string(content) != expected {
