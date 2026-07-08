@@ -1,16 +1,11 @@
 package daemon
 
 import (
-	"bufio"
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net"
-	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -60,8 +55,6 @@ const (
 	SDKAgn    = "agn"
 	SDKClaude = "claude"
 )
-
-const mcpProbeID = "agynd-mcp-ready"
 
 type Daemon struct {
 	cfg           config.Config
@@ -848,7 +841,6 @@ type tcpServiceTarget struct {
 type mcpServiceTarget struct {
 	label string
 	addr  string
-	url   string
 }
 
 func waitForTCPService(ctx context.Context, addr string, timeout time.Duration, label string) error {
@@ -891,7 +883,6 @@ func waitForMCPServers(ctx context.Context, servers []config.MCPServer, timeout 
 		targets = append(targets, mcpServiceTarget{
 			label: fmt.Sprintf("MCP server %s", server.Name),
 			addr:  addr,
-			url:   mcpEndpoint(server.Port),
 		})
 	}
 	return waitForMCPServices(ctx, targets, timeout)
@@ -907,12 +898,11 @@ func waitForMCPServices(ctx context.Context, targets []mcpServiceTarget, timeout
 	}
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
-	client := &http.Client{Timeout: 10 * time.Second}
 	for _, target := range targets {
 		attempt := 0
 		for {
 			attempt++
-			if err := probeMCPService(ctx, client, target.url); err == nil {
+			if err := probeMCPService(ctx, target.addr); err == nil {
 				log.Printf("%s at %s ready after %d attempt(s)", target.label, target.addr, attempt)
 				break
 			} else {
@@ -930,106 +920,13 @@ func waitForMCPServices(ctx context.Context, targets []mcpServiceTarget, timeout
 	return nil
 }
 
-func probeMCPService(ctx context.Context, client *http.Client, endpoint string) error {
-	body := []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"agynd","version":"mcp-ready"}}}`, mcpProbeID))
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+func probeMCPService(ctx context.Context, addr string) error {
+	dialer := net.Dialer{Timeout: 1 * time.Second}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/event-stream")
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("http status %s", resp.Status)
-	}
-	return readMCPProbeResult(resp.Body)
-}
-
-type mcpProbeResponse struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      string          `json:"id"`
-	Result  json.RawMessage `json:"result"`
-	Error   json.RawMessage `json:"error"`
-}
-
-func readMCPProbeResult(body io.Reader) error {
-	reader := bufio.NewReader(io.LimitReader(body, 64*1024))
-	var raw bytes.Buffer
-	var eventData []string
-	var lastEventErr error
-	sawSSE := false
-
-	for {
-		line, err := reader.ReadString('\n')
-		if line != "" {
-			raw.WriteString(line)
-			trimmed := strings.TrimRight(line, "\r\n")
-			if data, ok := strings.CutPrefix(trimmed, "data:"); ok {
-				sawSSE = true
-				eventData = append(eventData, strings.TrimSpace(data))
-			} else if sawSSE && strings.TrimSpace(trimmed) == "" {
-				if len(eventData) > 0 {
-					if err := validateMCPProbePayload([]byte(strings.Join(eventData, "\n"))); err == nil {
-						return nil
-					} else {
-						lastEventErr = err
-					}
-				}
-				eventData = nil
-			}
-		}
-		if err == nil {
-			continue
-		}
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		return err
-	}
-
-	if sawSSE {
-		if len(eventData) > 0 {
-			if err := validateMCPProbePayload([]byte(strings.Join(eventData, "\n"))); err == nil {
-				return nil
-			} else {
-				lastEventErr = err
-			}
-		}
-		if lastEventErr != nil {
-			return lastEventErr
-		}
-		return fmt.Errorf("initialize SSE response missing data")
-	}
-	return validateMCPProbePayload(raw.Bytes())
-}
-
-func validateMCPProbePayload(payload []byte) error {
-	payload = bytes.TrimSpace(payload)
-	if len(payload) == 0 {
-		return fmt.Errorf("initialize response is empty")
-	}
-	var response mcpProbeResponse
-	if err := json.Unmarshal(payload, &response); err != nil {
-		return fmt.Errorf("parse initialize response: %w", err)
-	}
-	if response.JSONRPC != "2.0" {
-		return fmt.Errorf("initialize response jsonrpc %q does not match 2.0", response.JSONRPC)
-	}
-	if response.ID != mcpProbeID {
-		return fmt.Errorf("initialize response id %q does not match %q", response.ID, mcpProbeID)
-	}
-	if len(bytes.TrimSpace(response.Error)) > 0 && !bytes.Equal(bytes.TrimSpace(response.Error), []byte("null")) {
-		return fmt.Errorf("initialize response contains error")
-	}
-	result := bytes.TrimSpace(response.Result)
-	if len(result) == 0 || bytes.Equal(result, []byte("null")) {
-		return fmt.Errorf("initialize response missing result")
-	}
-	return nil
+	return conn.Close()
 }
 
 type codexThreadDefaults struct {
