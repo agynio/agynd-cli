@@ -55,6 +55,53 @@ func TestWaitForMCPServersWaitsForInitializeResponse(t *testing.T) {
 	}
 }
 
+func TestReadMCPProbeResultRejectsInvalidPayloads(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload string
+	}{
+		{
+			name:    "json rpc error containing result text",
+			payload: `{"jsonrpc":"2.0","id":"agynd-mcp-ready","error":{"message":"no result yet"}}`,
+		},
+		{
+			name:    "unrelated payload containing result text",
+			payload: `{"message":"result is almost ready"}`,
+		},
+		{
+			name:    "wrong response id",
+			payload: `{"jsonrpc":"2.0","id":"other","result":{"protocolVersion":"2025-06-18"}}`,
+		},
+		{
+			name:    "null result",
+			payload: `{"jsonrpc":"2.0","id":"agynd-mcp-ready","result":null}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := readMCPProbeResult(strings.NewReader(tt.payload)); err == nil {
+				t.Fatal("expected invalid MCP initialize response to be rejected")
+			}
+		})
+	}
+}
+
+func TestReadMCPProbeResultAcceptsSSEInitializeResult(t *testing.T) {
+	payload := strings.Join([]string{
+		`event: message`,
+		`data: {"jsonrpc":"2.0","id":"unrelated","result":{"protocolVersion":"2025-06-18"}}`,
+		``,
+		`event: message`,
+		`data: {"jsonrpc":"2.0","id":"agynd-mcp-ready","result":{"protocolVersion":"2025-06-18"}}`,
+		``,
+	}, "\n")
+
+	if err := readMCPProbeResult(strings.NewReader(payload)); err != nil {
+		t.Fatalf("expected SSE initialize result to be accepted, got %v", err)
+	}
+}
+
 func TestWaitForMCPServersEmpty(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()

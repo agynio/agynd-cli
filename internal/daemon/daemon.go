@@ -1,8 +1,10 @@
 package daemon
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -58,6 +60,8 @@ const (
 	SDKAgn    = "agn"
 	SDKClaude = "claude"
 )
+
+const mcpProbeID = "agynd-mcp-ready"
 
 type Daemon struct {
 	cfg           config.Config
@@ -927,7 +931,7 @@ func waitForMCPServices(ctx context.Context, targets []mcpServiceTarget, timeout
 }
 
 func probeMCPService(ctx context.Context, client *http.Client, endpoint string) error {
-	body := []byte(`{"jsonrpc":"2.0","id":"agynd-mcp-ready","method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"agynd","version":"mcp-ready"}}}`)
+	body := []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"agynd","version":"mcp-ready"}}}`, mcpProbeID))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -945,29 +949,87 @@ func probeMCPService(ctx context.Context, client *http.Client, endpoint string) 
 	return readMCPProbeResult(resp.Body)
 }
 
+type mcpProbeResponse struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      string          `json:"id"`
+	Result  json.RawMessage `json:"result"`
+	Error   json.RawMessage `json:"error"`
+}
+
 func readMCPProbeResult(body io.Reader) error {
-	reader := io.LimitReader(body, 64*1024)
-	buffer := make([]byte, 0, 4096)
-	chunk := make([]byte, 1024)
+	reader := bufio.NewReader(io.LimitReader(body, 64*1024))
+	var raw bytes.Buffer
+	var eventData []string
+	var lastEventErr error
+	sawSSE := false
+
 	for {
-		n, err := reader.Read(chunk)
-		if n > 0 {
-			buffer = append(buffer, chunk[:n]...)
-			if bytes.Contains(buffer, []byte(`"result"`)) {
-				return nil
+		line, err := reader.ReadString('\n')
+		if line != "" {
+			raw.WriteString(line)
+			trimmed := strings.TrimRight(line, "\r\n")
+			if data, ok := strings.CutPrefix(trimmed, "data:"); ok {
+				sawSSE = true
+				eventData = append(eventData, strings.TrimSpace(data))
+			} else if sawSSE && strings.TrimSpace(trimmed) == "" {
+				if len(eventData) > 0 {
+					if err := validateMCPProbePayload([]byte(strings.Join(eventData, "\n"))); err == nil {
+						return nil
+					} else {
+						lastEventErr = err
+					}
+				}
+				eventData = nil
 			}
+		}
+		if err == nil {
+			continue
 		}
 		if errors.Is(err, io.EOF) {
 			break
 		}
-		if err != nil {
-			if bytes.Contains(buffer, []byte(`"result"`)) {
-				return nil
-			}
-			return err
-		}
+		return err
 	}
-	return fmt.Errorf("initialize response missing result")
+
+	if sawSSE {
+		if len(eventData) > 0 {
+			if err := validateMCPProbePayload([]byte(strings.Join(eventData, "\n"))); err == nil {
+				return nil
+			} else {
+				lastEventErr = err
+			}
+		}
+		if lastEventErr != nil {
+			return lastEventErr
+		}
+		return fmt.Errorf("initialize SSE response missing data")
+	}
+	return validateMCPProbePayload(raw.Bytes())
+}
+
+func validateMCPProbePayload(payload []byte) error {
+	payload = bytes.TrimSpace(payload)
+	if len(payload) == 0 {
+		return fmt.Errorf("initialize response is empty")
+	}
+	var response mcpProbeResponse
+	if err := json.Unmarshal(payload, &response); err != nil {
+		return fmt.Errorf("parse initialize response: %w", err)
+	}
+	if response.JSONRPC != "2.0" {
+		return fmt.Errorf("initialize response jsonrpc %q does not match 2.0", response.JSONRPC)
+	}
+	if response.ID != mcpProbeID {
+		return fmt.Errorf("initialize response id %q does not match %q", response.ID, mcpProbeID)
+	}
+	if len(bytes.TrimSpace(response.Error)) > 0 && !bytes.Equal(bytes.TrimSpace(response.Error), []byte("null")) {
+		return fmt.Errorf("initialize response contains error")
+	}
+	result := bytes.TrimSpace(response.Result)
+	if len(result) == 0 || bytes.Equal(result, []byte("null")) {
+		return fmt.Errorf("initialize response missing result")
+	}
+	return nil
 }
 
 type codexThreadDefaults struct {
