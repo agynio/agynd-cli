@@ -53,6 +53,12 @@ func (f *fakeCodexClient) StartTurn(ctx context.Context, _ *codex.TurnStartParam
 	return &codex.TurnStartResponse{Turn: codex.Turn{ID: "turn-1"}}, nil
 }
 
+func (f *fakeCodexClient) ResetStartTurnContext() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.startTurnCtx = nil
+}
+
 func (f *fakeCodexClient) StartTurnContext() context.Context {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -320,6 +326,55 @@ func TestHandleCodexMessageWrapsTurnResultError(t *testing.T) {
 	}
 }
 
+func TestHandleCodexMessageReturnsTransientNotificationAsRetryable(t *testing.T) {
+	store := codexbridge.NewThreadMappingStore(t.TempDir())
+	client := &fakeCodexClient{}
+	daemon := &Daemon{
+		sdk:          SDKCodex,
+		cfg:          config.Config{AgentID: uuid.MustParse(testAgentID), WorkDir: "/tmp"},
+		codex:        client,
+		mapping:      codexbridge.NewThreadMapping(),
+		mappingStore: store,
+		tracker:      codexbridge.NewTurnTracker(),
+		agent:        &agentsv1.Agent{},
+	}
+	message := platform.Message{ID: "msg-1", ThreadID: "thread-1", Body: "hello"}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- daemon.handleCodexMessage(context.Background(), message)
+	}()
+	turnErr := &codexbridge.ErrorNotificationError{
+		ThreadID: "codex-started",
+		TurnID:   "turn-1",
+		Message:  "stream disconn",
+	}
+	daemon.tracker.Notify(codexbridge.TurnResult{
+		ThreadID: "codex-started",
+		TurnID:   "turn-1",
+		Err:      turnErr,
+	})
+	var err error
+	select {
+	case err = <-errCh:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("handleCodexMessage did not finish after transient turn failure")
+	}
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	for _, expected := range []string{"codex_turn_result", "transient failure", "stream disconn", "msg-1"} {
+		if !strings.Contains(err.Error(), expected) {
+			t.Fatalf("expected %q in error: %v", expected, err)
+		}
+	}
+	if !errors.Is(err, turnErr) {
+		t.Fatalf("expected wrapped transient turn error, got %v", err)
+	}
+	if isTerminalAgentProcessingError(err) {
+		t.Fatalf("expected transient notification to remain retryable, got terminal error: %v", err)
+	}
+}
+
 func TestHandleCodexMessageReadsBackTurnMessage(t *testing.T) {
 	store := codexbridge.NewThreadMappingStore(t.TempDir())
 	client := &fakeCodexClient{readThreadResp: &codex.ThreadReadResponse{Thread: codex.Thread{Turns: []codex.Turn{{
@@ -463,5 +518,39 @@ func TestReadCodexTurnMessageTimeoutWrapsRetryableCause(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "context deadline exceeded") {
 		t.Fatalf("expected timeout text without double wrapping context deadline: %v", err)
+	}
+}
+
+func TestIsRetryableCodexErrorNotification(t *testing.T) {
+	tests := []struct {
+		name    string
+		message string
+	}{
+		{name: "stream disconn", message: "stream disconn"},
+		{name: "stream disconnected", message: "stream disconnected"},
+		{name: "connection reset", message: "provider connection reset by peer"},
+		{name: "connection refused", message: "connection refused"},
+		{name: "connection closed", message: "connection closed before response"},
+		{name: "EOF", message: "EOF"},
+		{name: "timeout", message: "request timeout"},
+		{name: "temporary network failure", message: "temporary network failure"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := &codexbridge.ErrorNotificationError{Message: tt.message}
+			if !isRetryableCodexErrorNotification(err) {
+				t.Fatalf("expected %q to be retryable", tt.message)
+			}
+		})
+	}
+}
+
+func TestIsRetryableCodexErrorNotificationRejectsUnknown(t *testing.T) {
+	unknownErr := &codexbridge.ErrorNotificationError{Message: "failed to read body"}
+	if isRetryableCodexErrorNotification(unknownErr) {
+		t.Fatal("expected unknown codex notification to remain terminal")
+	}
+	if isRetryableCodexErrorNotification(fmt.Errorf("stream disconn")) {
+		t.Fatal("expected non-notification error to remain non-retryable")
 	}
 }

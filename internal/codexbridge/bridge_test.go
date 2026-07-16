@@ -230,3 +230,26 @@ func TestBridgeRetryingErrorNotificationDoesNotCompleteTurn(t *testing.T) {
 	}
 	tracker.Cancel("turn-retry")
 }
+
+func TestBridgeStreamDisconnectNotificationCompletesTurn(t *testing.T) {
+	tracker := NewTurnTracker()
+	bridge := New(tracker)
+	ch := tracker.Register("turn-stream-disconnect")
+
+	bridge.OnError(&codex.ErrorNotification{
+		ThreadID:  "thread-1",
+		TurnID:    "turn-stream-disconnect",
+		Error:     codex.TurnError{Message: "stream disconn"},
+		WillRetry: false,
+	})
+
+	result := receiveResult(t, ch)
+	var notificationErr *ErrorNotificationError
+	if !errors.As(result.Err, &notificationErr) {
+		t.Fatalf("expected ErrorNotificationError, got %T", result.Err)
+	}
+	if notificationErr.Message != "stream disconn" {
+		t.Fatalf("unexpected error message: %q", notificationErr.Message)
+	}
+	assertClosed(t, ch)
+}
