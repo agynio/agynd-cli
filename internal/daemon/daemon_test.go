@@ -612,3 +612,55 @@ func TestNextSyncRetryBackoffCapsAtMaximum(t *testing.T) {
 		t.Fatalf("expected max backoff, got %s", got)
 	}
 }
+
+func TestNewHolderModeDoesNotConnectPlatform(t *testing.T) {
+	daemon, err := New(context.Background(), config.Config{Mode: config.ModeHolder, WorkDir: config.HolderDefaultWorkDir}, "test")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if daemon.sdk != config.ModeHolder {
+		t.Fatalf("expected holder sdk marker, got %q", daemon.sdk)
+	}
+	if daemon.gatewayConn != nil || daemon.subscriber != nil || daemon.consumer != nil || daemon.agents != nil || daemon.runners != nil {
+		t.Fatal("holder mode initialized platform dependencies")
+	}
+	if daemon.codex != nil || daemon.agn != nil || daemon.claude != nil || daemon.tracingProxy != nil {
+		t.Fatal("holder mode initialized agent runtime dependencies")
+	}
+}
+
+func TestRunHolderModeWaitsForCancellation(t *testing.T) {
+	daemon, err := New(context.Background(), config.Config{Mode: config.ModeHolder, WorkDir: config.HolderDefaultWorkDir}, "test")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- daemon.Run(ctx)
+	}()
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("holder mode returned before cancellation: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	cancel()
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected cancellation error, got nil")
+		}
+		for _, expected := range []string{"process_signal/shutdown", "canceled"} {
+			if !strings.Contains(err.Error(), expected) {
+				t.Fatalf("expected %q in error: %v", expected, err)
+			}
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("holder mode did not stop after cancellation")
+	}
+}

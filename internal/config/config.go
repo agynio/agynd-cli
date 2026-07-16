@@ -14,6 +14,12 @@ import (
 
 const agentConfigPath = "/agyn-bin/config.json"
 
+const (
+	ModeAgent            = "agent"
+	ModeHolder           = "holder"
+	HolderDefaultWorkDir = "/workspace"
+)
+
 var mcpServerNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
 type agentConfig struct {
@@ -27,6 +33,7 @@ type MCPServer struct {
 }
 
 type Config struct {
+	Mode           string
 	AgentID        uuid.UUID
 	GatewayAddress string
 	TracingAddress string
@@ -46,6 +53,14 @@ func FromEnv() (Config, error) {
 }
 
 func fromEnv(configPath string) (Config, error) {
+	mode, err := parseMode(os.Getenv("AGYND_MODE"))
+	if err != nil {
+		return Config{}, err
+	}
+	if mode == ModeHolder {
+		return holderConfigFromEnv(), nil
+	}
+
 	agentID, err := uuidutil.ParseUUID(strings.TrimSpace(os.Getenv("AGENT_ID")), "AGENT_ID")
 	if err != nil {
 		return Config{}, err
@@ -107,6 +122,7 @@ func fromEnv(configPath string) (Config, error) {
 	}
 
 	return Config{
+		Mode:           mode,
 		AgentID:        agentID,
 		GatewayAddress: gatewayAddress,
 		TracingAddress: tracingAddress,
@@ -120,6 +136,31 @@ func fromEnv(configPath string) (Config, error) {
 		MCPServers:     mcpServers,
 		MCPPort:        mcpPort,
 	}, nil
+}
+
+func parseMode(raw string) (string, error) {
+	mode := strings.TrimSpace(raw)
+	if mode == "" {
+		return ModeAgent, nil
+	}
+	switch mode {
+	case ModeAgent, ModeHolder:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("AGYND_MODE must be %q or %q", ModeAgent, ModeHolder)
+	}
+}
+
+func holderConfigFromEnv() Config {
+	workDir := strings.TrimSpace(os.Getenv("WORKSPACE_DIR"))
+	if workDir == "" {
+		workDir = HolderDefaultWorkDir
+	}
+	return Config{
+		Mode:    ModeHolder,
+		SDK:     ModeHolder,
+		WorkDir: workDir,
+	}
 }
 
 func loadAgentConfig(path string) (agentConfig, error) {

@@ -132,6 +132,9 @@ type platformSetup struct {
 }
 
 func New(ctx context.Context, cfg config.Config, version string) (*Daemon, error) {
+	if cfg.Mode == config.ModeHolder {
+		return newHolderDaemon(cfg), nil
+	}
 	switch cfg.SDK {
 	case SDKCodex:
 		return newCodexDaemon(ctx, cfg, version)
@@ -141,6 +144,13 @@ func New(ctx context.Context, cfg config.Config, version string) (*Daemon, error
 		return newClaudeDaemon(ctx, cfg, version)
 	default:
 		return nil, fmt.Errorf("unknown sdk %q", cfg.SDK)
+	}
+}
+
+func newHolderDaemon(cfg config.Config) *Daemon {
+	return &Daemon{
+		cfg: cfg,
+		sdk: config.ModeHolder,
 	}
 }
 
@@ -347,6 +357,9 @@ func (d *Daemon) Close() {
 }
 
 func (d *Daemon) Run(ctx context.Context) error {
+	if d.sdk == config.ModeHolder {
+		return runHolder(ctx)
+	}
 	d.ensureProcessingWake()
 	go d.runKeepalive(ctx)
 

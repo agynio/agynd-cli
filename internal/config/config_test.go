@@ -426,3 +426,76 @@ func TestFromEnvMissingConfigFields(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestFromEnvAgentModeDefault(t *testing.T) {
+	setRequiredEnv(t)
+	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	t.Setenv("AGYND_MODE", "")
+
+	cfg, err := fromEnv(configPath)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.Mode != ModeAgent {
+		t.Fatalf("expected agent mode, got %q", cfg.Mode)
+	}
+}
+
+func TestFromEnvHolderModeMinimal(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "missing-config.json")
+	t.Setenv("AGYND_MODE", ModeHolder)
+	t.Setenv("AGENT_ID", "")
+	t.Setenv("THREAD_ID", "")
+	t.Setenv("WORKLOAD_ID", "")
+	t.Setenv("WORKSPACE_DIR", "")
+
+	cfg, err := fromEnv(configPath)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.Mode != ModeHolder {
+		t.Fatalf("expected holder mode, got %q", cfg.Mode)
+	}
+	if cfg.SDK != ModeHolder {
+		t.Fatalf("expected holder sdk marker, got %q", cfg.SDK)
+	}
+	if cfg.WorkDir != HolderDefaultWorkDir {
+		t.Fatalf("expected holder default work dir %s, got %s", HolderDefaultWorkDir, cfg.WorkDir)
+	}
+	if cfg.AgentID.String() != "00000000-0000-0000-0000-000000000000" {
+		t.Fatalf("expected zero agent id, got %s", cfg.AgentID.String())
+	}
+	if cfg.ThreadID != "" || cfg.WorkloadID != "" || cfg.GatewayAddress != "" {
+		t.Fatalf("expected holder mode to skip platform config, got thread=%q workload=%q gateway=%q", cfg.ThreadID, cfg.WorkloadID, cfg.GatewayAddress)
+	}
+}
+
+func TestFromEnvHolderModeWorkDir(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "missing-config.json")
+	t.Setenv("AGYND_MODE", ModeHolder)
+	t.Setenv("WORKSPACE_DIR", " /sandbox-workspace ")
+
+	cfg, err := fromEnv(configPath)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.WorkDir != "/sandbox-workspace" {
+		t.Fatalf("unexpected holder work dir: %q", cfg.WorkDir)
+	}
+}
+
+func TestFromEnvInvalidMode(t *testing.T) {
+	setRequiredEnv(t)
+	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	t.Setenv("AGYND_MODE", "sandbox")
+
+	_, err := fromEnv(configPath)
+	if err == nil {
+		t.Fatal("expected error for invalid mode")
+	}
+	if !strings.Contains(err.Error(), "AGYND_MODE") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
