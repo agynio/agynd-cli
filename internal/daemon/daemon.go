@@ -55,6 +55,17 @@ const (
 	mcpLoopbackHost                 = "127.0.0.1"
 )
 
+var retryableCodexErrorNotificationTerms = [...]string{
+	"stream disconn",
+	"stream disconnected",
+	"connection reset",
+	"connection refused",
+	"connection closed",
+	"EOF",
+	"timeout",
+	"temporary network failure",
+}
+
 const (
 	SDKCodex  = "codex"
 	SDKAgn    = "agn"
@@ -509,6 +520,20 @@ func isTerminalAgentProcessingError(err error) bool {
 	return errors.As(err, &terminalErr)
 }
 
+func isRetryableCodexErrorNotification(err error) bool {
+	var notificationErr *codexbridge.ErrorNotificationError
+	if !errors.As(err, &notificationErr) {
+		return false
+	}
+	normalizedMessage := strings.ToLower(strings.TrimSpace(notificationErr.Message))
+	for _, retryableTerm := range retryableCodexErrorNotificationTerms {
+		if strings.Contains(normalizedMessage, strings.ToLower(retryableTerm)) {
+			return true
+		}
+	}
+	return false
+}
+
 func operationContextErr(ctx context.Context, err error) error {
 	if err == nil {
 		return nil
@@ -675,6 +700,14 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 		}
 		if result.Err != nil {
 			if !errors.Is(result.Err, codexbridge.ErrMissingAgentMessage) {
+				if isRetryableCodexErrorNotification(result.Err) {
+					log.Printf("codex turn transient failure: turn_id=%s message_id=%s cause=%s; retrying sync", turnID, message.ID, result.Err)
+					return operationError(
+						opCodexTurnResult,
+						0,
+						fmt.Errorf("codex turn %s transient failure for message %s: %w", turnID, message.ID, result.Err),
+					)
+				}
 				return operationError(
 					opCodexTurnResult,
 					0,

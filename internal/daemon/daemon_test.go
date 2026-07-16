@@ -127,6 +127,48 @@ func (h *handlingMessageConsumer) Calls() int {
 	return h.calls
 }
 
+type recordingMessageConsumer struct {
+	mu       sync.Mutex
+	calls    int
+	messages []platform.Message
+	started  chan struct{}
+	done     chan struct{}
+}
+
+func (r *recordingMessageConsumer) Sync(ctx context.Context, _ string, _ string, handle func(platform.Message) error) error {
+	r.mu.Lock()
+	r.calls++
+	callIndex := r.calls - 1
+	if callIndex >= len(r.messages) {
+		r.mu.Unlock()
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	message := r.messages[callIndex]
+	r.mu.Unlock()
+	if r.started != nil {
+		select {
+		case r.started <- struct{}{}:
+		default:
+		}
+	}
+
+	err := handle(message)
+	if r.done != nil {
+		select {
+		case r.done <- struct{}{}:
+		default:
+		}
+	}
+	return err
+}
+
+func (r *recordingMessageConsumer) Calls() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.calls
+}
+
 type recordingRunnersClient struct {
 	touched chan struct{}
 }
@@ -501,6 +543,111 @@ func TestRunReturnsTerminalCodexTurnFailureWithoutRetry(t *testing.T) {
 	}
 	if calls := consumer.Calls(); calls != 1 {
 		t.Fatalf("expected terminal failure to avoid retry, got %d sync calls", calls)
+	}
+}
+
+func TestRunRetriesTransientCodexStreamFailure(t *testing.T) {
+	subscriber := newFakeMessageSubscriber()
+	consumer := &recordingMessageConsumer{
+		messages: []platform.Message{
+			{ID: "msg-1", ThreadID: "thread-1", Body: "hello"},
+			{ID: "msg-1", ThreadID: "thread-1", Body: "hello"},
+		},
+		started: make(chan struct{}, 2),
+		done:    make(chan struct{}, 2),
+	}
+	store := codexbridge.NewThreadMappingStore(t.TempDir())
+	client := &fakeCodexClient{}
+	threadsClient := &fakeClaudeThreadsClient{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	daemon := &Daemon{
+		sdk:          SDKCodex,
+		cfg:          config.Config{AgentID: uuid.MustParse(testAgentID), WorkDir: "/tmp"},
+		runners:      &fakeRunnersClient{},
+		subscriber:   subscriber,
+		consumer:     consumer,
+		codex:        client,
+		mapping:      codexbridge.NewThreadMapping(),
+		mappingStore: store,
+		tracker:      codexbridge.NewTurnTracker(),
+		agent:        &agentsv1.Agent{},
+		threads:      platform.NewThreads(threadsClient),
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- daemon.Run(ctx)
+	}()
+
+	select {
+	case <-consumer.started:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("initial sync did not start")
+	}
+
+	waitForStartTurn := func() {
+		t.Helper()
+		deadline := time.After(500 * time.Millisecond)
+		for client.StartTurnContext() == nil {
+			select {
+			case err := <-errCh:
+				t.Fatalf("Run returned before codex turn started: %v", err)
+			case <-deadline:
+				t.Fatal("codex turn did not start")
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+	}
+
+	waitForStartTurn()
+	turnErr := &codexbridge.ErrorNotificationError{
+		ThreadID: "codex-started",
+		TurnID:   "turn-1",
+		Message:  "stream disconn",
+	}
+	daemon.tracker.Notify(codexbridge.TurnResult{ThreadID: "codex-started", TurnID: "turn-1", Err: turnErr})
+	select {
+	case <-consumer.done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("first sync did not finish")
+	}
+	if len(threadsClient.ackRequests) != 0 {
+		t.Fatalf("expected no ack for retryable failure, got %d", len(threadsClient.ackRequests))
+	}
+	client.ResetStartTurnContext()
+	select {
+	case err := <-errCh:
+		t.Fatalf("Run returned instead of retrying transient codex failure: %v", err)
+	case <-time.After(1100 * time.Millisecond):
+	}
+	if calls := consumer.Calls(); calls < 2 {
+		t.Fatalf("expected transient codex failure to retry sync, got %d calls", calls)
+	}
+
+	select {
+	case <-consumer.started:
+	case <-time.After(1500 * time.Millisecond):
+		t.Fatal("retry sync did not start")
+	}
+	waitForStartTurn()
+	daemon.tracker.Notify(codexbridge.TurnResult{ThreadID: "codex-started", TurnID: "turn-1", Message: "recovered response"})
+	select {
+	case <-consumer.done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("retry sync did not finish")
+	}
+	if len(threadsClient.ackRequests) != 1 {
+		t.Fatalf("expected ack after successful retry, got %d", len(threadsClient.ackRequests))
+	}
+	if got := threadsClient.ackRequests[0].GetMessageIds(); len(got) != 1 || got[0] != "msg-1" {
+		t.Fatalf("unexpected ack message ids: %#v", got)
+	}
+	cancel()
+	select {
+	case <-errCh:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Run did not stop")
 	}
 }
 
