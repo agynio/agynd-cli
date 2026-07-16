@@ -631,8 +631,7 @@ func TestNewHolderModeDoesNotConnectPlatform(t *testing.T) {
 }
 
 func TestRunHolderModeUsesDefaultWorkDir(t *testing.T) {
-	cfg := config.Config{Mode: config.ModeHolder, WorkDir: config.HolderDefaultWorkDir}
-	runHolderModeAndAssertWorkDir(t, cfg, config.HolderDefaultWorkDir)
+	runHolderModeAndAssertChdir(t, config.Config{Mode: config.ModeHolder, WorkDir: config.HolderDefaultWorkDir}, config.HolderDefaultWorkDir)
 }
 
 func TestRunHolderModeUsesConfiguredWorkDir(t *testing.T) {
@@ -679,6 +678,45 @@ func runHolderModeAndAssertWorkDir(t *testing.T, cfg config.Config, expectedWork
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("expected context.Canceled, got %v", err)
 		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("holder mode did not stop after cancellation")
+	}
+}
+
+func runHolderModeAndAssertChdir(t *testing.T, cfg config.Config, expectedWorkDir string) {
+	t.Helper()
+	originalChdir := holderChdir
+	chdirCalled := make(chan string, 1)
+	holderChdir = func(path string) error {
+		chdirCalled <- path
+		return nil
+	}
+	defer func() { holderChdir = originalChdir }()
+
+	daemon, err := New(context.Background(), cfg, "test")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- daemon.Run(ctx)
+	}()
+
+	select {
+	case got := <-chdirCalled:
+		if got != expectedWorkDir {
+			t.Fatalf("expected holder chdir %s, got %s", expectedWorkDir, got)
+		}
+	case err := <-errCh:
+		t.Fatalf("holder mode returned before chdir: %v", err)
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("holder mode did not apply work dir")
+	}
+	cancel()
+	select {
+	case <-errCh:
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("holder mode did not stop after cancellation")
 	}
