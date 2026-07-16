@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -629,8 +630,30 @@ func TestNewHolderModeDoesNotConnectPlatform(t *testing.T) {
 	}
 }
 
-func TestRunHolderModeWaitsForCancellation(t *testing.T) {
-	daemon, err := New(context.Background(), config.Config{Mode: config.ModeHolder, WorkDir: config.HolderDefaultWorkDir}, "test")
+func TestRunHolderModeUsesDefaultWorkDir(t *testing.T) {
+	cfg := config.Config{Mode: config.ModeHolder, WorkDir: config.HolderDefaultWorkDir}
+	runHolderModeAndAssertWorkDir(t, cfg, config.HolderDefaultWorkDir)
+}
+
+func TestRunHolderModeUsesConfiguredWorkDir(t *testing.T) {
+	workDir := t.TempDir()
+	cfg := config.Config{Mode: config.ModeHolder, WorkDir: workDir}
+	runHolderModeAndAssertWorkDir(t, cfg, workDir)
+}
+
+func runHolderModeAndAssertWorkDir(t *testing.T, cfg config.Config, expectedWorkDir string) {
+	t.Helper()
+	originalWorkDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get original work dir: %v", err)
+	}
+	defer func() {
+		if err := os.Chdir(originalWorkDir); err != nil {
+			t.Fatalf("restore original work dir: %v", err)
+		}
+	}()
+
+	daemon, err := New(context.Background(), cfg, "test")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -640,11 +663,7 @@ func TestRunHolderModeWaitsForCancellation(t *testing.T) {
 		errCh <- daemon.Run(ctx)
 	}()
 
-	select {
-	case err := <-errCh:
-		t.Fatalf("holder mode returned before cancellation: %v", err)
-	case <-time.After(100 * time.Millisecond):
-	}
+	waitForWorkDir(t, errCh, expectedWorkDir)
 
 	cancel()
 	select {
@@ -662,5 +681,26 @@ func TestRunHolderModeWaitsForCancellation(t *testing.T) {
 		}
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("holder mode did not stop after cancellation")
+	}
+}
+
+func waitForWorkDir(t *testing.T, errCh <-chan error, expectedWorkDir string) {
+	t.Helper()
+	deadline := time.After(500 * time.Millisecond)
+	for {
+		currentWorkDir, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("get work dir: %v", err)
+		}
+		if currentWorkDir == expectedWorkDir {
+			return
+		}
+		select {
+		case err := <-errCh:
+			t.Fatalf("holder mode returned before work dir was applied: %v", err)
+		case <-deadline:
+			t.Fatalf("expected holder work dir %s, got %s", expectedWorkDir, currentWorkDir)
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 }

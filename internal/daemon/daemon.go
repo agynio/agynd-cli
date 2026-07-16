@@ -358,7 +358,7 @@ func (d *Daemon) Close() {
 
 func (d *Daemon) Run(ctx context.Context) error {
 	if d.sdk == config.ModeHolder {
-		return runHolder(ctx)
+		return runHolder(ctx, d.cfg.WorkDir)
 	}
 	d.ensureProcessingWake()
 	go d.runKeepalive(ctx)
