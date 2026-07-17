@@ -3,31 +3,40 @@ version: v2beta1
 vars:
   AGYND_NAMESPACE: platform
   DEV_IMAGE: ghcr.io/agynio/devcontainer-go:1
+  AGYND_ARGOCD_APP: agynd
+  AGYND_DEPLOYMENT: agynd-agynd
 
 functions:
   disable_argocd_sync: |-
-    if kubectl get application agynd -n argocd >/dev/null 2>&1; then
-      echo "Disabling ArgoCD auto-sync for agynd..."
-      kubectl patch application agynd -n argocd \
+    if kubectl get application ${AGYND_ARGOCD_APP} -n argocd >/dev/null 2>&1; then
+      echo "Disabling ArgoCD auto-sync for ${AGYND_ARGOCD_APP}..."
+      kubectl patch application ${AGYND_ARGOCD_APP} -n argocd \
         --type merge \
         -p '{"spec":{"syncPolicy":{"automated":null}}}'
       echo "ArgoCD auto-sync disabled."
     else
-      echo "WARNING: ArgoCD Application 'agynd' not found in argocd namespace."
+      echo "ArgoCD Application '${AGYND_ARGOCD_APP}' not found; using baseline stack."
     fi
   restore_argocd_sync: &restore_argocd_sync |-
-    if kubectl get application agynd -n argocd >/dev/null 2>&1; then
-      echo "Re-enabling ArgoCD auto-sync for agynd..."
-      kubectl patch application agynd -n argocd \
+    if kubectl get application ${AGYND_ARGOCD_APP} -n argocd >/dev/null 2>&1; then
+      echo "Re-enabling ArgoCD auto-sync for ${AGYND_ARGOCD_APP}..."
+      kubectl patch application ${AGYND_ARGOCD_APP} -n argocd \
         --type merge \
         -p '{"spec":{"syncPolicy":{"automated":{"prune":true,"selfHeal":true}}}}'
       echo "ArgoCD auto-sync restored."
     else
-      echo "WARNING: ArgoCD Application 'agynd' not found in argocd namespace."
+      echo "ArgoCD Application '${AGYND_ARGOCD_APP}' not found; no sync policy to restore."
     fi
+  agynd_deployment_exists: |-
+    kubectl get deployment ${AGYND_DEPLOYMENT} -n ${AGYND_NAMESPACE} >/dev/null 2>&1
   patch_deployment: |-
-    echo "Patching agynd deployment for DevSpace..."
-    kubectl patch deployment agynd-agynd -n ${AGYND_NAMESPACE} --type strategic --patch "$(cat <<'EOF'
+    if ! agynd_deployment_exists; then
+      echo "Deployment '${AGYND_DEPLOYMENT}' not found in namespace '${AGYND_NAMESPACE}'; using baseline stack."
+      return 0
+    fi
+
+    echo "Patching ${AGYND_DEPLOYMENT} deployment for DevSpace..."
+    kubectl patch deployment ${AGYND_DEPLOYMENT} -n ${AGYND_NAMESPACE} --type strategic --patch "$(cat <<'EOF'
     spec:
       template:
         spec:
@@ -88,7 +97,9 @@ pipelines:
     run: |-
       disable_argocd_sync
       patch_deployment
-      if [ "$(get_flag "watch")" == "true" ]; then
+      if ! agynd_deployment_exists; then
+        echo "No agynd deployment is provisioned; deploy step completed against baseline stack."
+      elif [ "$(get_flag "watch")" == "true" ]; then
         start_dev --disable-pod-replace agynd
       else
         start_dev --disable-pod-replace agynd
