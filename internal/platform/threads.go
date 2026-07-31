@@ -10,12 +10,15 @@ import (
 )
 
 type Message struct {
-	ID        string
-	ThreadID  string
-	SenderID  string
-	Body      string
-	FileIDs   []string
-	CreatedAt time.Time
+	ID string
+	// InboxItemID is set when the message arrived through an agent instance's
+	// inbox, and is what the ack addresses. Empty for thread-participant reads.
+	InboxItemID string
+	ThreadID    string
+	SenderID    string
+	Body        string
+	FileIDs     []string
+	CreatedAt   time.Time
 }
 
 type Threads struct {

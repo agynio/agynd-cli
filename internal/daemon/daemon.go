@@ -27,6 +27,7 @@ import (
 	"github.com/agynio/agynd-cli/internal/tracingproxy"
 	claude "github.com/agynio/claude-sdk-go"
 	codex "github.com/agynio/codex-sdk-go"
+	"github.com/google/uuid"
 )
 
 const (
@@ -80,6 +81,7 @@ type Daemon struct {
 	gatewayConn   platformConn
 	threads       *platform.Threads
 	agents        gatewayv1.AgentsGatewayClient
+	agentInbox    *platform.Agents
 	runners       runnersClient
 	subscriber    messageSubscriber
 	consumer      messageConsumer
@@ -137,6 +139,7 @@ type platformSetup struct {
 	threads       *platform.Threads
 	notifications *platform.Notifications
 	agents        gatewayv1.AgentsGatewayClient
+	agentInbox    *platform.Agents
 	runners       *platform.Runners
 	agent         *agentsv1.Agent
 	skills        []skill
@@ -230,6 +233,7 @@ func tryConnectPlatform(ctx context.Context, cfg config.Config) (*platformSetup,
 
 	threadsClient := platform.NewThreads(threadsGateway)
 	notificationsClient := platform.NewNotifications(notificationsGateway)
+	agentInboxClient := platform.NewAgents(agentsClient)
 	runnersClient := platform.NewRunners(runnersGateway)
 
 	agentResp, err := agentsClient.GetAgent(ctx, &agentsv1.GetAgentRequest{Id: cfg.AgentID.String()})
@@ -269,6 +273,7 @@ func tryConnectPlatform(ctx context.Context, cfg config.Config) (*platformSetup,
 		threads:       threadsClient,
 		notifications: notificationsClient,
 		agents:        agentsClient,
+		agentInbox:    agentInboxClient,
 		runners:       runnersClient,
 		agent:         agent,
 		skills:        skills,
@@ -337,9 +342,10 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 		gatewayConn:  setup.gatewayConn,
 		threads:      setup.threads,
 		agents:       setup.agents,
+		agentInbox:   setup.agentInbox,
 		runners:      setup.runners,
 		subscriber:   subscriber.New(setup.notifications, cfg.ThreadID),
-		consumer:     platform.NewConsumer(setup.threads, pageSize, pageTimeout),
+		consumer:     platform.NewInboxConsumer(setup.agentInbox, pageSize, pageTimeout),
 		codex:        codexClient,
 		mapping:      threadsMapping,
 		mappingStore: mappingStore,
@@ -546,7 +552,7 @@ func operationContextErr(ctx context.Context, err error) error {
 
 func (d *Daemon) publishResponse(ctx context.Context, sdk string, threadID string, message platform.Message, response string) error {
 	publishCtx, cancel := context.WithTimeout(ctx, messagePublishTimeout)
-	_, err := d.threads.SendMessage(publishCtx, threadID, d.cfg.AgentID.String(), response, nil)
+	_, err := d.threads.SendMessage(publishCtx, threadID, d.selfID(), response, nil)
 	err = operationContextErr(publishCtx, err)
 	cancel()
 	if err != nil {
@@ -559,9 +565,25 @@ func (d *Daemon) publishResponse(ctx context.Context, sdk string, threadID strin
 	return nil
 }
 
+// selfID is the identity the daemon acts as: its agent instance once one is
+// assigned, and the agent class for callers that predate instances.
+func (d *Daemon) selfID() string {
+	if d.cfg.AgentInstanceID != uuid.Nil {
+		return d.cfg.AgentInstanceID.String()
+	}
+	return d.cfg.AgentID.String()
+}
+
 func (d *Daemon) ackMessage(ctx context.Context, message platform.Message) error {
 	ackCtx, cancel := context.WithTimeout(ctx, messageAckTimeout)
-	err := d.threads.AckMessages(ackCtx, d.cfg.AgentID.String(), []string{message.ID})
+	var err error
+	// An inbox item is acked on the inbox that delivered it; the thread ack
+	// would leave the item outstanding and the instance would re-read it.
+	if message.InboxItemID != "" && d.agentInbox != nil {
+		err = d.agentInbox.AckInboxItems(ackCtx, d.cfg.AgentInstanceID.String(), []string{message.InboxItemID})
+	} else {
+		err = d.threads.AckMessages(ackCtx, d.cfg.AgentID.String(), []string{message.ID})
+	}
 	err = operationContextErr(ackCtx, err)
 	cancel()
 	if err != nil {
@@ -610,8 +632,12 @@ func (d *Daemon) syncMessages(ctx context.Context) error {
 		d.syncMu.Unlock()
 	}()
 
-	if err := d.consumer.Sync(ctx, d.cfg.AgentID.String(), d.cfg.ThreadID, func(message platform.Message) error {
+	participantID := d.selfID()
+	if err := d.consumer.Sync(ctx, participantID, d.cfg.ThreadID, func(message platform.Message) error {
 		if d.tracingProxy != nil {
+			// The thread varies per message once the daemon serves an inbox,
+			// so it is stamped here rather than once at startup.
+			d.tracingProxy.SetThreadID(message.ThreadID)
 			d.tracingProxy.SetMessageID(message.ID)
 		}
 		if err := d.ensureMCPReady(ctx); err != nil {
@@ -626,7 +652,7 @@ func (d *Daemon) syncMessages(ctx context.Context) error {
 		return operationError(
 			opSyncPageFetch,
 			pageTimeout,
-			fmt.Errorf("sync unacked messages for participant %s thread %s: %w", d.cfg.AgentID.String(), d.cfg.ThreadID, pageFetchErr),
+			fmt.Errorf("sync unacked messages for participant %s thread %s: %w", participantID, d.cfg.ThreadID, pageFetchErr),
 		)
 	}
 	return nil

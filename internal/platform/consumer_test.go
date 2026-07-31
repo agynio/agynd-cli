@@ -14,48 +14,15 @@ import (
 )
 
 type fakeThreadsClient struct {
+	// Embedded so the fake satisfies the client without restating it. Adding an
+	// RPC to the API cannot break this build; calling one the test did not
+	// override panics, which is what a test wants.
+	gatewayv1.ThreadsGatewayClient
+
 	responses []*threadsv1.GetUnackedMessagesResponse
 	index     int
 	requests  []*threadsv1.GetUnackedMessagesRequest
 	err       error
-}
-
-var _ gatewayv1.ThreadsGatewayClient = (*fakeThreadsClient)(nil)
-
-func (f *fakeThreadsClient) CreateThread(ctx context.Context, in *threadsv1.CreateThreadRequest, opts ...grpc.CallOption) (*threadsv1.CreateThreadResponse, error) {
-	return nil, fmt.Errorf("CreateThread not implemented")
-}
-
-func (f *fakeThreadsClient) ArchiveThread(ctx context.Context, in *threadsv1.ArchiveThreadRequest, opts ...grpc.CallOption) (*threadsv1.ArchiveThreadResponse, error) {
-	return nil, fmt.Errorf("ArchiveThread not implemented")
-}
-
-func (f *fakeThreadsClient) AddParticipant(ctx context.Context, in *threadsv1.AddParticipantRequest, opts ...grpc.CallOption) (*threadsv1.AddParticipantResponse, error) {
-	return nil, fmt.Errorf("AddParticipant not implemented")
-}
-
-func (f *fakeThreadsClient) SendMessage(ctx context.Context, in *threadsv1.SendMessageRequest, opts ...grpc.CallOption) (*threadsv1.SendMessageResponse, error) {
-	return nil, fmt.Errorf("SendMessage not implemented")
-}
-
-func (f *fakeThreadsClient) GetThreads(ctx context.Context, in *threadsv1.GetThreadsRequest, opts ...grpc.CallOption) (*threadsv1.GetThreadsResponse, error) {
-	return nil, fmt.Errorf("GetThreads not implemented")
-}
-
-func (f *fakeThreadsClient) GetOrganizationThreads(ctx context.Context, in *threadsv1.GetOrganizationThreadsRequest, opts ...grpc.CallOption) (*threadsv1.GetOrganizationThreadsResponse, error) {
-	return nil, fmt.Errorf("GetOrganizationThreads not implemented")
-}
-
-func (f *fakeThreadsClient) ListOrganizationThreads(ctx context.Context, in *threadsv1.ListOrganizationThreadsRequest, opts ...grpc.CallOption) (*threadsv1.ListOrganizationThreadsResponse, error) {
-	return nil, fmt.Errorf("ListOrganizationThreads not implemented")
-}
-
-func (f *fakeThreadsClient) GetThread(ctx context.Context, in *threadsv1.GetThreadRequest, opts ...grpc.CallOption) (*threadsv1.GetThreadResponse, error) {
-	return nil, fmt.Errorf("GetThread not implemented")
-}
-
-func (f *fakeThreadsClient) GetMessages(ctx context.Context, in *threadsv1.GetMessagesRequest, opts ...grpc.CallOption) (*threadsv1.GetMessagesResponse, error) {
-	return nil, fmt.Errorf("GetMessages not implemented")
 }
 
 func (f *fakeThreadsClient) GetUnackedMessages(ctx context.Context, in *threadsv1.GetUnackedMessagesRequest, opts ...grpc.CallOption) (*threadsv1.GetUnackedMessagesResponse, error) {

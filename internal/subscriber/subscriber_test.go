@@ -168,6 +168,33 @@ func TestSubscriberIgnoreOtherThread(t *testing.T) {
 	waitForRun(t, done)
 }
 
+// An instance is not pinned to a thread and must wake for every one of them,
+// including notifications that carry no thread at all.
+func TestSubscriberWithoutThreadWakesOnAnyThread(t *testing.T) {
+	responses := make(chan *notificationsv1.SubscribeResponse, 2)
+	stream := &fakeStream{responses: responses}
+	client := &fakeNotifications{stream: stream}
+	sub := New(client, "")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- sub.Run(ctx)
+	}()
+
+	responses <- makeMessageCreated("1f5a4e5c-350a-4f3a-8dda-0ef049b89d09")
+
+	select {
+	case <-sub.Wake():
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected wake signal")
+	}
+
+	cancel()
+	close(responses)
+	waitForRun(t, done)
+}
+
 func TestNextBackoffProgression(t *testing.T) {
 	tests := []struct {
 		name     string

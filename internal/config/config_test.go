@@ -10,6 +10,7 @@ import (
 
 const (
 	validAgentID    = "550e8400-e29b-41d4-a716-446655440000"
+	validInstanceID = "1c2f0f4e-8b9d-4a5b-9b3c-1d2e3f4a5b6c"
 	validThreadID   = "3f7fd7e3-5c6c-4a1e-8f4e-69c0030d3ed7"
 	validWorkloadID = "7e5dc613-7822-4f48-9f55-6ce6d72a0a2e"
 )
@@ -17,6 +18,7 @@ const (
 func setRequiredEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("AGENT_ID", validAgentID)
+	t.Setenv("AGENT_INSTANCE_ID", validInstanceID)
 	t.Setenv("THREAD_ID", validThreadID)
 	t.Setenv("WORKLOAD_ID", validWorkloadID)
 	t.Setenv("MCP_PORT", "")
@@ -108,7 +110,7 @@ func TestFromEnvMissingRequired(t *testing.T) {
 		expected string
 	}{
 		{name: "agent-id", missing: "AGENT_ID", expected: "AGENT_ID"},
-		{name: "thread-id", missing: "THREAD_ID", expected: "THREAD_ID"},
+		{name: "agent-instance-id", missing: "AGENT_INSTANCE_ID", expected: "AGENT_INSTANCE_ID"},
 		{name: "workload-id", missing: "WORKLOAD_ID", expected: "WORKLOAD_ID"},
 	}
 	for _, test := range tests {
@@ -239,16 +241,46 @@ func TestFromEnvWorkloadIDInvalid(t *testing.T) {
 	}
 }
 
+// An agent instance consumes an inbox that spans threads, so it starts without
+// one. Only the thread-scoped callers that predate instances set THREAD_ID.
 func TestFromEnvThreadIDEmpty(t *testing.T) {
 	setRequiredEnv(t)
 	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
 	t.Setenv("THREAD_ID", "")
 
+	cfg, err := fromEnv(configPath)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.ThreadID != "" {
+		t.Fatalf("expected an empty thread id, got %q", cfg.ThreadID)
+	}
+}
+
+func TestFromEnvAgentInstanceID(t *testing.T) {
+	setRequiredEnv(t)
+	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	t.Setenv("AGENT_INSTANCE_ID", "  1C2F0F4E-8B9D-4A5B-9B3C-1D2E3F4A5B6C ")
+
+	cfg, err := fromEnv(configPath)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.AgentInstanceID.String() != "1c2f0f4e-8b9d-4a5b-9b3c-1d2e3f4a5b6c" {
+		t.Fatalf("unexpected agent instance id: %q", cfg.AgentInstanceID)
+	}
+}
+
+func TestFromEnvAgentInstanceIDInvalid(t *testing.T) {
+	setRequiredEnv(t)
+	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	t.Setenv("AGENT_INSTANCE_ID", "not-a-uuid")
+
 	_, err := fromEnv(configPath)
 	if err == nil {
-		t.Fatal("expected error for missing THREAD_ID")
+		t.Fatal("expected error for invalid AGENT_INSTANCE_ID")
 	}
-	if !strings.Contains(err.Error(), "THREAD_ID") {
+	if !strings.Contains(err.Error(), "AGENT_INSTANCE_ID") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

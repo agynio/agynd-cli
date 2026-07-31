@@ -9,49 +9,23 @@ import (
 	"time"
 
 	gatewayv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/gateway/v1"
-	runnerv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/runner/v1"
 	runnersv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/runners/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type fakeRunnersGatewayClient struct {
+	// Embedded so the fake satisfies the client without restating it. Adding an
+	// RPC to the API cannot break this build; calling one the test did not
+	// override panics, which is what a test wants.
+	gatewayv1.RunnersGatewayClient
+
 	listReq  *runnersv1.ListWorkloadsByThreadRequest
 	listResp *runnersv1.ListWorkloadsByThreadResponse
 	listErr  error
 
 	touchReq *runnersv1.TouchWorkloadRequest
 	touchErr error
-}
-
-var _ gatewayv1.RunnersGatewayClient = (*fakeRunnersGatewayClient)(nil)
-
-func (f *fakeRunnersGatewayClient) RegisterRunner(ctx context.Context, in *runnersv1.RegisterRunnerRequest, opts ...grpc.CallOption) (*runnersv1.RegisterRunnerResponse, error) {
-	return nil, fmt.Errorf("RegisterRunner not implemented")
-}
-
-func (f *fakeRunnersGatewayClient) GetRunner(ctx context.Context, in *runnersv1.GetRunnerRequest, opts ...grpc.CallOption) (*runnersv1.GetRunnerResponse, error) {
-	return nil, fmt.Errorf("GetRunner not implemented")
-}
-
-func (f *fakeRunnersGatewayClient) ListRunners(ctx context.Context, in *runnersv1.ListRunnersRequest, opts ...grpc.CallOption) (*runnersv1.ListRunnersResponse, error) {
-	return nil, fmt.Errorf("ListRunners not implemented")
-}
-
-func (f *fakeRunnersGatewayClient) UpdateRunner(ctx context.Context, in *runnersv1.UpdateRunnerRequest, opts ...grpc.CallOption) (*runnersv1.UpdateRunnerResponse, error) {
-	return nil, fmt.Errorf("UpdateRunner not implemented")
-}
-
-func (f *fakeRunnersGatewayClient) DeleteRunner(ctx context.Context, in *runnersv1.DeleteRunnerRequest, opts ...grpc.CallOption) (*runnersv1.DeleteRunnerResponse, error) {
-	return nil, fmt.Errorf("DeleteRunner not implemented")
-}
-
-func (f *fakeRunnersGatewayClient) EnrollRunner(ctx context.Context, in *runnersv1.EnrollRunnerRequest, opts ...grpc.CallOption) (*runnersv1.EnrollRunnerResponse, error) {
-	return nil, fmt.Errorf("EnrollRunner not implemented")
-}
-
-func (f *fakeRunnersGatewayClient) ListWorkloads(ctx context.Context, in *runnersv1.ListWorkloadsRequest, opts ...grpc.CallOption) (*runnersv1.ListWorkloadsResponse, error) {
-	return nil, fmt.Errorf("ListWorkloads not implemented")
 }
 
 func (f *fakeRunnersGatewayClient) ListWorkloadsByThread(ctx context.Context, in *runnersv1.ListWorkloadsByThreadRequest, opts ...grpc.CallOption) (*runnersv1.ListWorkloadsByThreadResponse, error) {
@@ -62,32 +36,12 @@ func (f *fakeRunnersGatewayClient) ListWorkloadsByThread(ctx context.Context, in
 	return f.listResp, nil
 }
 
-func (f *fakeRunnersGatewayClient) GetWorkload(ctx context.Context, in *runnersv1.GetWorkloadRequest, opts ...grpc.CallOption) (*runnersv1.GetWorkloadResponse, error) {
-	return nil, fmt.Errorf("GetWorkload not implemented")
-}
-
 func (f *fakeRunnersGatewayClient) TouchWorkload(ctx context.Context, in *runnersv1.TouchWorkloadRequest, opts ...grpc.CallOption) (*runnersv1.TouchWorkloadResponse, error) {
 	f.touchReq = in
 	if f.touchErr != nil {
 		return nil, f.touchErr
 	}
 	return &runnersv1.TouchWorkloadResponse{}, nil
-}
-
-func (f *fakeRunnersGatewayClient) StreamWorkloadLogs(ctx context.Context, in *runnerv1.StreamWorkloadLogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[runnerv1.StreamWorkloadLogsResponse], error) {
-	return nil, fmt.Errorf("StreamWorkloadLogs not implemented")
-}
-
-func (f *fakeRunnersGatewayClient) GetVolume(ctx context.Context, in *runnersv1.GetVolumeRequest, opts ...grpc.CallOption) (*runnersv1.GetVolumeResponse, error) {
-	return nil, fmt.Errorf("GetVolume not implemented")
-}
-
-func (f *fakeRunnersGatewayClient) ListVolumes(ctx context.Context, in *runnersv1.ListVolumesRequest, opts ...grpc.CallOption) (*runnersv1.ListVolumesResponse, error) {
-	return nil, fmt.Errorf("ListVolumes not implemented")
-}
-
-func (f *fakeRunnersGatewayClient) ListVolumesByThread(ctx context.Context, in *runnersv1.ListVolumesByThreadRequest, opts ...grpc.CallOption) (*runnersv1.ListVolumesByThreadResponse, error) {
-	return nil, fmt.Errorf("ListVolumesByThread not implemented")
 }
 
 func TestWorkloadFromProtoValid(t *testing.T) {

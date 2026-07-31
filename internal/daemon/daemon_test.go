@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -784,7 +785,13 @@ func TestRunHolderModeUsesDefaultWorkDir(t *testing.T) {
 func TestRunHolderModeUsesConfiguredWorkDir(t *testing.T) {
 	workDir := t.TempDir()
 	cfg := config.Config{Mode: config.ModeHolder, WorkDir: workDir}
-	runHolderModeAndAssertWorkDir(t, cfg, workDir)
+	// os.Getwd reports the resolved path, and on macOS TempDir hands back
+	// /var/..., a symlink to /private/var/....
+	resolved, err := filepath.EvalSymlinks(workDir)
+	if err != nil {
+		t.Fatalf("resolve work dir: %v", err)
+	}
+	runHolderModeAndAssertWorkDir(t, cfg, resolved)
 }
 
 func runHolderModeAndAssertWorkDir(t *testing.T, cfg config.Config, expectedWorkDir string) {
