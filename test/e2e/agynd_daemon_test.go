@@ -28,6 +28,7 @@ import (
 const (
 	agyndE2EAgentID    = "550e8400-e29b-41d4-a716-446655440000"
 	agyndE2EThreadID   = "550e8400-e29b-41d4-a716-446655440001"
+	agyndE2EInstanceID = "550e8400-e29b-41d4-a716-446655440003"
 	agyndE2EWorkloadID = "550e8400-e29b-41d4-a716-446655440002"
 )
 
@@ -42,7 +43,7 @@ func TestAgyndBinaryInitializesWithStubGateway(t *testing.T) {
 	cmd.Dir = workDir
 	cmd.Env = append(cleanAgyndEnv(),
 		"AGENT_ID="+agyndE2EAgentID,
-		"THREAD_ID="+agyndE2EThreadID,
+		"AGENT_INSTANCE_ID="+agyndE2EInstanceID,
 		"WORKLOAD_ID="+agyndE2EWorkloadID,
 		"GATEWAY_ADDRESS="+server.address,
 		"TRACING_ADDRESS=127.0.0.1:1",
