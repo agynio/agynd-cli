@@ -33,19 +33,23 @@ type MCPServer struct {
 }
 
 type Config struct {
-	Mode           string
-	AgentID        uuid.UUID
-	GatewayAddress string
-	TracingAddress string
-	ThreadID       string
-	WorkloadID     string
-	LLMBaseURL     string
-	LLMAPIToken    string
-	SDK            string
-	AgentBinary    string
-	WorkDir        string
-	MCPServers     []MCPServer
-	MCPPort        *int
+	Mode            string
+	AgentID         uuid.UUID
+	AgentInstanceID uuid.UUID
+	GatewayAddress  string
+	TracingAddress  string
+	// ThreadID pins the daemon to a single thread. Instances serve every
+	// thread that reaches their inbox, so it is empty for them and set only
+	// by the thread-scoped callers that predate instances.
+	ThreadID    string
+	WorkloadID  string
+	LLMBaseURL  string
+	LLMAPIToken string
+	SDK         string
+	AgentBinary string
+	WorkDir     string
+	MCPServers  []MCPServer
+	MCPPort     *int
 }
 
 func FromEnv() (Config, error) {
@@ -73,12 +77,20 @@ func fromEnv(configPath string) (Config, error) {
 	if tracingAddress == "" {
 		tracingAddress = "tracing.ziti:443"
 	}
-	threadID := strings.TrimSpace(os.Getenv("THREAD_ID"))
-	threadUUID, err := uuidutil.ParseUUID(threadID, "THREAD_ID")
+	agentInstanceID, err := uuidutil.ParseUUID(strings.TrimSpace(os.Getenv("AGENT_INSTANCE_ID")), "AGENT_INSTANCE_ID")
 	if err != nil {
 		return Config{}, err
 	}
-	threadID = threadUUID.String()
+	// Optional: an instance consumes its inbox, which spans threads. Callers
+	// that still scope the daemon to one thread set it and keep the old path.
+	threadID := strings.TrimSpace(os.Getenv("THREAD_ID"))
+	if threadID != "" {
+		threadUUID, err := uuidutil.ParseUUID(threadID, "THREAD_ID")
+		if err != nil {
+			return Config{}, err
+		}
+		threadID = threadUUID.String()
+	}
 	workloadID := strings.TrimSpace(os.Getenv("WORKLOAD_ID"))
 	workloadUUID, err := uuidutil.ParseUUID(workloadID, "WORKLOAD_ID")
 	if err != nil {
@@ -122,19 +134,20 @@ func fromEnv(configPath string) (Config, error) {
 	}
 
 	return Config{
-		Mode:           mode,
-		AgentID:        agentID,
-		GatewayAddress: gatewayAddress,
-		TracingAddress: tracingAddress,
-		ThreadID:       threadID,
-		WorkloadID:     workloadID,
-		LLMBaseURL:     llmBaseURL,
-		LLMAPIToken:    llmAPIToken,
-		SDK:            sdk,
-		AgentBinary:    agentBinary,
-		WorkDir:        workDir,
-		MCPServers:     mcpServers,
-		MCPPort:        mcpPort,
+		Mode:            mode,
+		AgentID:         agentID,
+		AgentInstanceID: agentInstanceID,
+		GatewayAddress:  gatewayAddress,
+		TracingAddress:  tracingAddress,
+		ThreadID:        threadID,
+		WorkloadID:      workloadID,
+		LLMBaseURL:      llmBaseURL,
+		LLMAPIToken:     llmAPIToken,
+		SDK:             sdk,
+		AgentBinary:     agentBinary,
+		WorkDir:         workDir,
+		MCPServers:      mcpServers,
+		MCPPort:         mcpPort,
 	}, nil
 }
 

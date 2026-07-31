@@ -322,6 +322,42 @@ func TestProxyNextMessageOverwritesMessageID(t *testing.T) {
 	}
 }
 
+// An instance serves many threads, so the proxy starts without one and is told
+// which thread each message belongs to as it is handled.
+func TestProxySetThreadIDPerMessage(t *testing.T) {
+	server, listener, requests := startCaptureServer(t)
+	defer server.Stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	proxy, err := Start(ctx, Config{TracingAddress: listener.Addr().String(), ListenAddress: "127.0.0.1:0", ThreadID: ""})
+	if err != nil {
+		t.Fatalf("start proxy: %v", err)
+	}
+	defer proxy.Close()
+
+	conn, err := grpc.NewClient(proxy.Address(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer conn.Close()
+
+	client := collectortracev1.NewTraceServiceClient(conn)
+	for _, threadID := range []string{"thread-a", "thread-b"} {
+		proxy.SetThreadID(threadID)
+		if _, err := client.Export(ctx, &collectortracev1.ExportTraceServiceRequest{
+			ResourceSpans: []*tracev1.ResourceSpans{{Resource: &resourcev1.Resource{}}},
+		}); err != nil {
+			t.Fatalf("export via proxy: %v", err)
+		}
+		forwarded := awaitRequest(t, requests)
+		if value, ok := findAttribute(forwarded.ResourceSpans[0].Resource, threadIDAttributeKey); !ok || value.GetStringValue() != threadID {
+			t.Fatalf("expected forwarded request to carry thread %q, got %v", threadID, value)
+		}
+	}
+}
+
 func TestProxyNoThreadIDPassthrough(t *testing.T) {
 	server, listener, requests := startCaptureServer(t)
 	defer server.Stop()

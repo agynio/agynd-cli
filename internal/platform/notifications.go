@@ -8,7 +8,10 @@ import (
 	notificationsv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/notifications/v1"
 )
 
-const threadParticipantSelfRoom = "thread_participant:me"
+const (
+	threadParticipantSelfRoom = "thread_participant:me"
+	agentInstanceSelfRoom     = "agent_instance:me"
+)
 
 type SubscribeStream interface {
 	Recv() (*notificationsv1.SubscribeResponse, error)
@@ -23,8 +26,10 @@ func NewNotifications(client gatewayv1.NotificationsGatewayClient) *Notification
 }
 
 func (n *Notifications) Subscribe(ctx context.Context) (SubscribeStream, error) {
+	// Both rooms: the identity is an agent instance and gets woken through its
+	// inbox, but it is still a participant in the threads it was handed.
 	request := &notificationsv1.SubscribeRequest{
-		Rooms: []string{threadParticipantSelfRoom},
+		Rooms: []string{threadParticipantSelfRoom, agentInstanceSelfRoom},
 	}
 	stream, err := n.client.Subscribe(ctx, request)
 	if err != nil {

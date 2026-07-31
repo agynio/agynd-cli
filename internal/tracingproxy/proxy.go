@@ -41,10 +41,13 @@ type Proxy struct {
 	upstream   collectortracev1.TraceServiceClient
 	conn       *grpc.ClientConn
 	address    string
-	threadID   string
 	workloadID string
-	messageMu  sync.RWMutex
-	messageID  string
+	// An instance serves many threads, so the thread is per-message and set
+	// from the consumer goroutine while Export runs on gRPC's.
+	threadMu  sync.RWMutex
+	threadID  string
+	messageMu sync.RWMutex
+	messageID string
 }
 
 func Start(ctx context.Context, cfg Config) (*Proxy, error) {
@@ -93,8 +96,8 @@ func (p *Proxy) Export(ctx context.Context, req *collectortracev1.ExportTraceSer
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "trace export request missing")
 	}
-	if p.threadID != "" {
-		injectThreadID(req, p.threadID)
+	if threadID := p.threadIDValue(); threadID != "" {
+		injectThreadID(req, threadID)
 	}
 	if p.workloadID != "" {
 		injectWorkloadID(req, p.workloadID)
@@ -103,6 +106,18 @@ func (p *Proxy) Export(ctx context.Context, req *collectortracev1.ExportTraceSer
 		injectMessageID(req, messageID)
 	}
 	return p.upstream.Export(ctx, req)
+}
+
+func (p *Proxy) SetThreadID(threadID string) {
+	p.threadMu.Lock()
+	p.threadID = threadID
+	p.threadMu.Unlock()
+}
+
+func (p *Proxy) threadIDValue() string {
+	p.threadMu.RLock()
+	defer p.threadMu.RUnlock()
+	return p.threadID
 }
 
 func (p *Proxy) SetMessageID(messageID string) {

@@ -77,8 +77,10 @@ func (s *Subscriber) Run(ctx context.Context) error {
 			if envelope.GetEvent() != messageCreatedEvent {
 				continue
 			}
+			// An instance has no fixed thread and must wake for every one of
+			// them; only a thread-scoped daemon filters.
 			payloadThreadID, ok := payloadThreadID(envelope.GetPayload())
-			if !ok || payloadThreadID != s.threadID {
+			if s.threadID != "" && (!ok || payloadThreadID != s.threadID) {
 				continue
 			}
 			select {

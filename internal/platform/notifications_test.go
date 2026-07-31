@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -44,8 +45,9 @@ func TestNotificationsSubscribe(t *testing.T) {
 	if stream == nil {
 		t.Fatal("expected stream")
 	}
-	if fake.request == nil || len(fake.request.GetRooms()) != 1 || fake.request.GetRooms()[0] != threadParticipantSelfRoom {
-		t.Fatalf("unexpected subscribe request: %+v", fake.request)
+	want := []string{threadParticipantSelfRoom, agentInstanceSelfRoom}
+	if fake.request == nil || !reflect.DeepEqual(fake.request.GetRooms(), want) {
+		t.Fatalf("expected rooms %v, got %+v", want, fake.request)
 	}
 }
 
