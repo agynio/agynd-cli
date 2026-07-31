@@ -10,7 +10,7 @@ import (
 
 const (
 	threadParticipantSelfRoom = "thread_participant:me"
-	agentInstanceSelfRoom     = "agent_instance:me"
+	instanceInboxSelfRoom     = "instance_inbox:me"
 )
 
 type SubscribeStream interface {
@@ -29,7 +29,7 @@ func (n *Notifications) Subscribe(ctx context.Context) (SubscribeStream, error) 
 	// Both rooms: the identity is an agent instance and gets woken through its
 	// inbox, but it is still a participant in the threads it was handed.
 	request := &notificationsv1.SubscribeRequest{
-		Rooms: []string{threadParticipantSelfRoom, agentInstanceSelfRoom},
+		Rooms: []string{threadParticipantSelfRoom, instanceInboxSelfRoom},
 	}
 	stream, err := n.client.Subscribe(ctx, request)
 	if err != nil {

@@ -45,7 +45,7 @@ func TestNotificationsSubscribe(t *testing.T) {
 	if stream == nil {
 		t.Fatal("expected stream")
 	}
-	want := []string{threadParticipantSelfRoom, agentInstanceSelfRoom}
+	want := []string{threadParticipantSelfRoom, instanceInboxSelfRoom}
 	if fake.request == nil || !reflect.DeepEqual(fake.request.GetRooms(), want) {
 		t.Fatalf("expected rooms %v, got %+v", want, fake.request)
 	}
