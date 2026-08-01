@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	agentsv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/agents/v1"
 	gatewayv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/gateway/v1"
 	threadsv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/threads/v1"
 	"github.com/agynio/agynd-cli/internal/config"
@@ -58,10 +59,16 @@ func (f *fakeClaudeThreadsClient) AddParticipant(ctx context.Context, in *thread
 
 func (f *fakeClaudeThreadsClient) SendMessage(ctx context.Context, in *threadsv1.SendMessageRequest, opts ...grpc.CallOption) (*threadsv1.SendMessageResponse, error) {
 	f.sendRequests = append(f.sendRequests, in)
+	// The server echoes back the thread it resolved, which is how a caller that
+	// left thread_id off learns where the message landed.
+	threadID := in.GetThreadId()
+	if threadID == "" {
+		threadID = "resolved-default-thread"
+	}
 	return &threadsv1.SendMessageResponse{
 		Message: &threadsv1.Message{
 			Id:        "msg-out",
-			ThreadId:  in.GetThreadId(),
+			ThreadId:  threadID,
 			SenderId:  in.GetSenderId(),
 			Body:      in.GetBody(),
 			FileIds:   append([]string{}, in.GetFileIds()...),
@@ -113,6 +120,7 @@ func TestHandleClaudeMessageSuccess(t *testing.T) {
 		cfg:     config.Config{AgentID: agentID},
 		threads: threads,
 		claude:  client,
+		agent:   &agentsv1.Agent{FinalMessage: agentsv1.AgentFinalMessage_AGENT_FINAL_MESSAGE_DEFAULT_THREAD},
 	}
 
 	message := platform.Message{
@@ -137,8 +145,10 @@ func TestHandleClaudeMessageSuccess(t *testing.T) {
 		t.Fatalf("expected SendMessage to be called once, got %d", len(threadsClient.sendRequests))
 	}
 	sendReq := threadsClient.sendRequests[0]
-	if sendReq.GetThreadId() != "thread-1" {
-		t.Fatalf("expected thread id %q, got %q", "thread-1", sendReq.GetThreadId())
+	// Left off the wire: Threads resolves the instance's default thread from
+	// the caller identity, so a stale value in the container cannot misroute it.
+	if sendReq.GetThreadId() != "" {
+		t.Fatalf("expected no thread id, got %q", sendReq.GetThreadId())
 	}
 	if sendReq.GetSenderId() != agentID.String() {
 		t.Fatalf("expected sender id %q, got %q", agentID.String(), sendReq.GetSenderId())
@@ -158,6 +168,9 @@ func TestHandleClaudeMessageSuccess(t *testing.T) {
 	}
 }
 
+// An agent that sent explicitly during its turn has nothing left to say. That
+// is ordinary, so the turn completes and the item is acked -- failing here
+// would leave it unacked and the turn repeating forever.
 func TestHandleClaudeMessageEmptyResponse(t *testing.T) {
 	client := &fakeClaudeClient{result: &claude.TurnResult{Response: " "}}
 	threadsClient := &fakeClaudeThreadsClient{}
@@ -166,19 +179,18 @@ func TestHandleClaudeMessageEmptyResponse(t *testing.T) {
 		cfg:     config.Config{AgentID: uuid.MustParse(testAgentID)},
 		threads: platform.NewThreads(threadsClient),
 		claude:  client,
+		agent:   &agentsv1.Agent{FinalMessage: agentsv1.AgentFinalMessage_AGENT_FINAL_MESSAGE_DEFAULT_THREAD},
 	}
 
 	message := platform.Message{ID: "msg-1", ThreadID: "thread-1", Body: "hello"}
-	if err := daemon.handleClaudeMessage(context.Background(), message); err == nil {
-		t.Fatal("expected error, got nil")
-	} else if !strings.Contains(err.Error(), "empty response") {
-		t.Fatalf("unexpected error: %v", err)
+	if err := daemon.handleClaudeMessage(context.Background(), message); err != nil {
+		t.Fatalf("expected no error, got %v", err)
 	}
 	if len(threadsClient.sendRequests) != 0 {
 		t.Fatalf("expected no send requests, got %d", len(threadsClient.sendRequests))
 	}
-	if len(threadsClient.ackRequests) != 0 {
-		t.Fatalf("expected no ack requests, got %d", len(threadsClient.ackRequests))
+	if len(threadsClient.ackRequests) != 1 {
+		t.Fatalf("expected the message to be acked, got %d ack requests", len(threadsClient.ackRequests))
 	}
 }
 
