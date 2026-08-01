@@ -28,6 +28,8 @@ import (
 	claude "github.com/agynio/claude-sdk-go"
 	codex "github.com/agynio/codex-sdk-go"
 	"github.com/google/uuid"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -550,16 +552,40 @@ func operationContextErr(ctx context.Context, err error) error {
 	return err
 }
 
-func (d *Daemon) publishResponse(ctx context.Context, sdk string, threadID string, message platform.Message, response string) error {
+// publishFinalMessage delivers the text an agent CLI produced at the end of a
+// turn. Whether that text is a deliverable at all is the class's to say, and
+// where it goes is the instance's: the thread_id is left off the wire so
+// Threads resolves the instance's default from the caller identity.
+//
+// Not the thread the message arrived on. An agent woken by a reply on a
+// sub-thread still owes its answer to the thread it was created to serve.
+//
+// Nothing to say and nowhere to say it are both ordinary: an agent that
+// already sent explicitly has an empty final text, and an instance whose class
+// asked for no default has no destination. Both log and carry on, because
+// failing here would leave the item unacked and the turn repeating forever.
+func (d *Daemon) publishFinalMessage(ctx context.Context, sdk string, message platform.Message, response string) error {
+	if d.agent.GetFinalMessage() != agentsv1.AgentFinalMessage_AGENT_FINAL_MESSAGE_DEFAULT_THREAD {
+		return nil
+	}
+	response = strings.TrimSpace(response)
+	if response == "" {
+		log.Printf("final message: %s turn produced no text for message %s; nothing to post", sdk, message.ID)
+		return nil
+	}
 	publishCtx, cancel := context.WithTimeout(ctx, messagePublishTimeout)
-	_, err := d.threads.SendMessage(publishCtx, threadID, d.selfID(), response, nil)
+	_, err := d.threads.SendMessage(publishCtx, "", d.selfID(), response, nil)
 	err = operationContextErr(publishCtx, err)
 	cancel()
+	if status.Code(err) == codes.FailedPrecondition {
+		log.Printf("final message: no default thread for message %s; not posting: %v", message.ID, err)
+		return nil
+	}
 	if err != nil {
 		return operationError(
 			opMessagePublish,
 			messagePublishTimeout,
-			fmt.Errorf("publish %s response for message %s on thread %s: %w", sdk, message.ID, threadID, err),
+			fmt.Errorf("publish %s final message for message %s: %w", sdk, message.ID, err),
 		)
 	}
 	return nil
@@ -761,7 +787,7 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 				terminalCodexTurn(fmt.Errorf("codex turn %s completed with empty response for message %s", turnID, message.ID)),
 			)
 		}
-		if err := d.publishResponse(ctx, SDKCodex, threadID, message, result.Message); err != nil {
+		if err := d.publishFinalMessage(ctx, SDKCodex, message, result.Message); err != nil {
 			return err
 		}
 		if err := d.ackMessage(ctx, message); err != nil {

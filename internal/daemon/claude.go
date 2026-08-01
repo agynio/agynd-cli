@@ -132,14 +132,7 @@ func (d *Daemon) handleClaudeMessage(ctx context.Context, message platform.Messa
 		)
 	}
 	response := strings.TrimSpace(result.Response)
-	if response == "" {
-		return operationError(
-			opClaudeTurn,
-			0,
-			fmt.Errorf("claude turn completed with empty response for message %s on thread %s", message.ID, threadID),
-		)
-	}
-	if err := d.publishResponse(ctx, SDKClaude, threadID, message, response); err != nil {
+	if err := d.publishFinalMessage(ctx, SDKClaude, message, response); err != nil {
 		return err
 	}
 	if err := d.ackMessage(ctx, message); err != nil {

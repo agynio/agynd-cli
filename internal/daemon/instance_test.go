@@ -45,6 +45,7 @@ func TestInstanceRepliesAndAcksAsItself(t *testing.T) {
 		threads:    platform.NewThreads(threadsClient),
 		agentInbox: platform.NewAgents(inboxClient),
 		claude:     client,
+		agent:      &agentsv1.Agent{FinalMessage: agentsv1.AgentFinalMessage_AGENT_FINAL_MESSAGE_DEFAULT_THREAD},
 	}
 
 	message := platform.Message{
@@ -93,6 +94,7 @@ func TestThreadScopedDaemonStillAcksOnTheThread(t *testing.T) {
 		threads:    platform.NewThreads(threadsClient),
 		agentInbox: platform.NewAgents(inboxClient),
 		claude:     client,
+		agent:      &agentsv1.Agent{FinalMessage: agentsv1.AgentFinalMessage_AGENT_FINAL_MESSAGE_DEFAULT_THREAD},
 	}
 
 	message := platform.Message{ID: "msg-1", ThreadID: "thread-1", Body: "hello"}
@@ -123,5 +125,36 @@ func TestSelfIDPrefersTheInstance(t *testing.T) {
 	withoutInstance := &Daemon{cfg: config.Config{AgentID: agentID}}
 	if got := withoutInstance.selfID(); got != agentID.String() {
 		t.Fatalf("expected the agent id, got %q", got)
+	}
+}
+
+// discard is the default, so an agent that was never configured to deliver its
+// final text posts nothing on turn end -- only its explicit sends appear.
+func TestFinalMessageDiscardPostsNothing(t *testing.T) {
+	client := &fakeClaudeClient{result: &claude.TurnResult{Response: "hello"}}
+	threadsClient := &fakeClaudeThreadsClient{}
+	inboxClient := &fakeAgentsInboxClient{}
+	daemon := &Daemon{
+		sdk: SDKClaude,
+		cfg: config.Config{
+			AgentID:         uuid.MustParse(testAgentID),
+			AgentInstanceID: uuid.MustParse(testAgentInstanceID),
+		},
+		threads:    platform.NewThreads(threadsClient),
+		agentInbox: platform.NewAgents(inboxClient),
+		claude:     client,
+		agent:      &agentsv1.Agent{},
+	}
+
+	message := platform.Message{ID: "msg-1", InboxItemID: "item-1", ThreadID: "thread-1", Body: "hello"}
+	if err := daemon.handleClaudeMessage(context.Background(), message); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(threadsClient.sendRequests) != 0 {
+		t.Fatalf("expected nothing posted, got %d sends", len(threadsClient.sendRequests))
+	}
+	// Still acked: the turn ran, there was simply nothing to deliver.
+	if len(inboxClient.ackRequests) != 1 {
+		t.Fatalf("expected the item to be acked, got %d", len(inboxClient.ackRequests))
 	}
 }

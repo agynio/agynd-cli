@@ -57,10 +57,10 @@ func (t *Threads) GetUnackedMessages(ctx context.Context, participantID string, 
 	return messages, resp.GetNextPageToken(), nil
 }
 
+// SendMessage leaves thread_id on the wire exactly as given. An agent instance
+// may pass none, in which case Threads resolves the instance's default thread
+// from the caller identity -- the daemon does not need to know it.
 func (t *Threads) SendMessage(ctx context.Context, threadID, senderID, body string, fileIDs []string) (Message, error) {
-	if threadID == "" {
-		return Message{}, fmt.Errorf("thread id is required")
-	}
 	if senderID == "" {
 		return Message{}, fmt.Errorf("sender id is required")
 	}
