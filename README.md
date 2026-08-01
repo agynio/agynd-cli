@@ -28,9 +28,6 @@ it into the local VM, and set it as the agent's init image:
 agyn local load-image my-agent-init:dev
 ```
 
-The E2E workflow in `agynio/agents-orchestrator` does exactly this and is the
-reference for the image layout.
-
 ## E2E validation
 
 The GitHub E2E workflow runs this repository's local E2E tests with:
