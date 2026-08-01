@@ -12,9 +12,20 @@ Full setup: https://github.com/agynio/architecture/blob/main/architecture/operat
 
 ### Run from sources
 
+`agynd` is not deployed as a service. The [Runner](https://github.com/agynio/architecture/blob/main/architecture/agynd-cli.md)
+starts it as the main process of an agent container, so there is no Deployment
+to attach to and no `devspace dev` to run -- the way to exercise a change is to
+put the binary in an agent init image and point an agent at it:
+
 ```bash
-devspace dev
-devspace dev -w
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o .build/agynd ./cmd/agynd
+```
+
+Then build an init image that copies `.build/agynd` over the one baked in, load
+it into the local VM, and set it as the agent's init image:
+
+```bash
+agyn local load-image my-agent-init:dev
 ```
 
 ## E2E validation
