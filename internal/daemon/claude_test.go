@@ -135,8 +135,9 @@ func TestHandleClaudeMessageSuccess(t *testing.T) {
 	if client.turnCalls != 1 {
 		t.Fatalf("expected Turn to be called once, got %d", client.turnCalls)
 	}
-	if client.params.Prompt != "hello" {
-		t.Fatalf("expected prompt %q, got %q", "hello", client.params.Prompt)
+	// The prompt carries the source header now; see buildInput.
+	if want := "thread: thread-1\nhello"; client.params.Prompt != want {
+		t.Fatalf("expected prompt %q, got %q", want, client.params.Prompt)
 	}
 	if _, ok := client.ctx.Deadline(); ok {
 		t.Fatal("expected claude turn context without completion deadline")

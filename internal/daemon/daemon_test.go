@@ -223,8 +223,10 @@ func TestBuildInputText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if got != "hello" {
-		t.Fatalf("expected trimmed text, got %q", got)
+	// Direct, because the message names no thread: the agent has to know that
+	// to fall back to its default thread rather than guess.
+	if got != "source: direct\nhello" {
+		t.Fatalf("expected the header and trimmed text, got %q", got)
 	}
 }
 
@@ -237,7 +239,7 @@ func TestBuildInputFilesOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if got != "agyn://file/file-a\nagyn://file/file-b" {
+	if got != "source: direct\nagyn://file/file-a\nagyn://file/file-b" {
 		t.Fatalf("unexpected file-only input: %q", got)
 	}
 }
@@ -252,7 +254,7 @@ func TestBuildInputTextWithFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if got != "status\nagyn://file/file-a\nagyn://file/file-b" {
+	if got != "source: direct\nstatus\nagyn://file/file-a\nagyn://file/file-b" {
 		t.Fatalf("unexpected text-with-files input: %q", got)
 	}
 }
@@ -894,5 +896,38 @@ func waitForWorkDir(t *testing.T, errCh <-chan error, expectedWorkDir string) {
 			t.Fatalf("expected holder work dir %s, got %s", expectedWorkDir, currentWorkDir)
 		case <-time.After(10 * time.Millisecond):
 		}
+	}
+}
+
+// An instance serves many threads and many senders. Without a header the agent
+// received a bare body and could tell neither apart -- it could not address a
+// reply to the right thread, which is the whole point of the format in
+// agynd-cli.md "Message Formatting".
+func TestBuildInputCarriesTheThreadAndSender(t *testing.T) {
+	message := platform.Message{
+		ID:       "msg-5",
+		ThreadID: "thread-7",
+		SenderID: "identity-3",
+		Body:     "status?",
+	}
+	got, err := buildInput(message)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got != "thread: thread-7\nfrom: identity-3\nstatus?" {
+		t.Fatalf("unexpected input: %q", got)
+	}
+}
+
+// A direct item has no thread, and saying so is what tells the agent to use its
+// default thread instead of inventing one.
+func TestBuildInputMarksDirectItems(t *testing.T) {
+	message := platform.Message{ID: "msg-6", SenderID: "identity-4", Body: "ping"}
+	got, err := buildInput(message)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got != "source: direct\nfrom: identity-4\nping" {
+		t.Fatalf("unexpected input: %q", got)
 	}
 }

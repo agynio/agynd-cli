@@ -1220,5 +1220,27 @@ func buildInput(message platform.Message) (string, error) {
 	if text == "" {
 		return "", fmt.Errorf("message %s has no content", message.ID)
 	}
-	return text, nil
+	return messageHeader(message) + text, nil
+}
+
+// messageHeader names where an item came from, per agynd-cli.md "Message
+// Formatting". Without it an agent saw a bare body: it could not tell one
+// thread from another, nor who was asking, and an instance serves many of both.
+//
+// A thread-sourced item names its thread; a direct one says so, because it has
+// none and the agent has to fall back to its default thread. from carries the
+// sender's identity rather than a handle -- nothing resolves an identity back
+// to one, which is the same gap that leaves the chat UI showing "unknown
+// participant" -- so it is emitted as an id until that lookup exists.
+func messageHeader(message platform.Message) string {
+	var header strings.Builder
+	if threadID := strings.TrimSpace(message.ThreadID); threadID != "" {
+		fmt.Fprintf(&header, "thread: %s\n", threadID)
+	} else {
+		header.WriteString("source: direct\n")
+	}
+	if senderID := strings.TrimSpace(message.SenderID); senderID != "" {
+		fmt.Fprintf(&header, "from: %s\n", senderID)
+	}
+	return header.String()
 }
