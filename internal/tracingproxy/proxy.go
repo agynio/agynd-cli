@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
+	"net/http"
 	"sync"
 	"time"
 
@@ -17,6 +19,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -25,6 +28,7 @@ const (
 	threadIDAttributeKey   = "agyn.thread.id"
 	messageIDAttributeKey  = "agyn.thread.message.id"
 	workloadIDAttributeKey = "agyn.workload.id"
+	maxHTTPExportBytes     = 32 << 20
 )
 
 type Config struct {
@@ -37,11 +41,13 @@ type Config struct {
 type Proxy struct {
 	collectortracev1.UnimplementedTraceServiceServer
 
-	server     *grpc.Server
-	upstream   collectortracev1.TraceServiceClient
-	conn       *grpc.ClientConn
-	address    string
-	workloadID string
+	server      *grpc.Server
+	httpServer  *http.Server
+	upstream    collectortracev1.TraceServiceClient
+	conn        *grpc.ClientConn
+	address     string
+	httpAddress string
+	workloadID  string
 	// An instance serves many threads, so the thread is per-message and set
 	// from the consumer goroutine while Export runs on gRPC's.
 	threadMu  sync.RWMutex
@@ -85,11 +91,73 @@ func Start(ctx context.Context, cfg Config) (*Proxy, error) {
 		}
 	}()
 
+	// The same exporter over OTLP/HTTP, on its own port. Codex cannot use the
+	// gRPC one -- its otlp-grpc exporter fails to build at all, against any
+	// address -- and the console and any other OTLP client still can, so this
+	// serves both rather than replacing one with the other.
+	httpListener, err := net.Listen("tcp", httpListenAddress(listenAddress))
+	if err != nil {
+		server.Stop()
+		_ = conn.Close()
+		return nil, fmt.Errorf("listen for OTLP/HTTP: %w", err)
+	}
+	proxy.httpAddress = httpListener.Addr().String()
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/traces", proxy.serveHTTPTraces)
+	proxy.httpServer = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	go func() {
+		if err := proxy.httpServer.Serve(httpListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("tracing proxy OTLP/HTTP stopped: %v", err)
+		}
+	}()
+
 	return proxy, nil
+}
+
+// httpListenAddress keeps the OTLP/HTTP listener on the same host as the gRPC
+// one and lets the kernel choose its port, so the two never collide.
+func httpListenAddress(grpcAddress string) string {
+	host, _, err := net.SplitHostPort(grpcAddress)
+	if err != nil || host == "" {
+		return "127.0.0.1:0"
+	}
+	return net.JoinHostPort(host, "0")
+}
+
+// serveHTTPTraces accepts the binary protobuf encoding, which is what the OTLP
+// specification defaults to and the only one codex emits.
+func (p *Proxy) serveHTTPTraces(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxHTTPExportBytes))
+	if err != nil {
+		http.Error(w, "read body", http.StatusBadRequest)
+		return
+	}
+	request := &collectortracev1.ExportTraceServiceRequest{}
+	if err := proto.Unmarshal(body, request); err != nil {
+		http.Error(w, "decode OTLP request", http.StatusBadRequest)
+		return
+	}
+	response, err := p.Export(r.Context(), request)
+	if err != nil {
+		http.Error(w, "export traces", http.StatusBadGateway)
+		return
+	}
+	encoded, err := proto.Marshal(response)
+	if err != nil {
+		http.Error(w, "encode OTLP response", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-protobuf")
+	_, _ = w.Write(encoded)
 }
 
 func (p *Proxy) Address() string {
 	return p.address
+}
+
+// HTTPAddress is the OTLP/HTTP endpoint; append /v1/traces for the exporter.
+func (p *Proxy) HTTPAddress() string {
+	return p.httpAddress
 }
 
 func (p *Proxy) Export(ctx context.Context, req *collectortracev1.ExportTraceServiceRequest) (*collectortracev1.ExportTraceServiceResponse, error) {
@@ -148,6 +216,11 @@ func (p *Proxy) Close() {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		p.server.Stop()
+	}
+	if p.httpServer != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = p.httpServer.Shutdown(shutdownCtx)
+		cancel()
 	}
 	_ = p.conn.Close()
 }

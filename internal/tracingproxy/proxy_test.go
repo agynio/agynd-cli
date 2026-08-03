@@ -1,8 +1,11 @@
 package tracingproxy
 
 import (
+	"bytes"
 	"context"
 	"net"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +15,7 @@ import (
 	tracev1 "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/proto"
 )
 
 type captureTraceServer struct {
@@ -454,4 +458,86 @@ func findSpanAttribute(span *tracev1.Span, key string) (*commonv1.AnyValue, bool
 		}
 	}
 	return nil, false
+}
+
+// Codex exports over OTLP/HTTP because its gRPC exporter will not build, so the
+// proxy has to accept that encoding as well and enrich it identically -- a
+// forwarder that only spoke gRPC left codex unable to start at all.
+func TestProxyForwardsOTLPOverHTTP(t *testing.T) {
+	server, listener, requests := startCaptureServer(t)
+	defer server.Stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	proxy, err := Start(ctx, Config{TracingAddress: listener.Addr().String(), ListenAddress: "127.0.0.1:0", ThreadID: "thread-http", WorkloadID: "workload-http"})
+	if err != nil {
+		t.Fatalf("start proxy: %v", err)
+	}
+	defer proxy.Close()
+	proxy.SetMessageID("message-http")
+
+	if proxy.HTTPAddress() == "" || proxy.HTTPAddress() == proxy.Address() {
+		t.Fatalf("expected a distinct OTLP/HTTP address, got %q and %q", proxy.HTTPAddress(), proxy.Address())
+	}
+
+	body, err := proto.Marshal(&collectortracev1.ExportTraceServiceRequest{
+		ResourceSpans: []*tracev1.ResourceSpans{{Resource: &resourcev1.Resource{}}},
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+proxy.HTTPAddress()+"/v1/traces", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	request.Header.Set("Content-Type", "application/x-protobuf")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("post traces: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", response.StatusCode)
+	}
+
+	forwarded := awaitRequest(t, requests)
+	for key, want := range map[string]string{
+		threadIDAttributeKey:   "thread-http",
+		workloadIDAttributeKey: "workload-http",
+		messageIDAttributeKey:  "message-http",
+	} {
+		value, ok := findAttribute(forwarded.ResourceSpans[0].Resource, key)
+		if !ok || value.GetStringValue() != want {
+			t.Fatalf("expected %s=%s, got %v", key, want, value)
+		}
+	}
+}
+
+// A body that is not an OTLP request is the client's error, not the upstream's.
+func TestProxyRejectsMalformedHTTPBody(t *testing.T) {
+	server, listener, _ := startCaptureServer(t)
+	defer server.Stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	proxy, err := Start(ctx, Config{TracingAddress: listener.Addr().String(), ListenAddress: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatalf("start proxy: %v", err)
+	}
+	defer proxy.Close()
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+proxy.HTTPAddress()+"/v1/traces", strings.NewReader("not protobuf at all"))
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("post traces: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", response.StatusCode)
+	}
 }

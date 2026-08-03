@@ -33,29 +33,32 @@ import (
 )
 
 const (
-	pageSize                  int32 = 100
-	pageTimeout                     = 30 * time.Second
-	turnStartTimeout                = 5 * time.Minute
-	messagePublishTimeout           = 15 * time.Second
-	messageAckTimeout               = 15 * time.Second
-	mcpReadyTimeout                 = 4 * time.Minute
-	llmReadyTimeout                 = 120 * time.Second
-	codexReadbackTimeout            = 10 * time.Second
-	codexReadbackPollInterval       = 250 * time.Millisecond
-	syncRetryInitialBackoff         = 1 * time.Second
-	syncRetryMaxBackoff             = 30 * time.Second
-	opSyncPageFetch                 = "sync_page_fetch"
-	opCodexStartTurn                = "codex_start_turn"
-	opMessagePublish                = "publish"
-	opMessageAck                    = "ack"
-	opKeepaliveTouch                = "keepalive_touch"
-	opCodexWaitTurnCompletion       = "codex_wait_turn_completion"
-	opCodexTurnResult               = "codex_turn_result"
-	opAgnTurn                       = "agn_turn"
-	opClaudeTurn                    = "claude_turn"
-	opProcessSignalShutdown         = "process_signal/shutdown"
-	tracingProxyListenAddress       = "127.0.0.1:0"
-	mcpLoopbackHost                 = "127.0.0.1"
+	pageSize              int32 = 100
+	pageTimeout                 = 30 * time.Second
+	turnStartTimeout            = 5 * time.Minute
+	messagePublishTimeout       = 15 * time.Second
+	messageAckTimeout           = 15 * time.Second
+	mcpReadyTimeout             = 4 * time.Minute
+	// codexHandshakeTimeout bounds the initialize exchange with the agent
+	// process. Generous, because it also covers the binary starting up.
+	codexHandshakeTimeout     = 2 * time.Minute
+	llmReadyTimeout           = 120 * time.Second
+	codexReadbackTimeout      = 10 * time.Second
+	codexReadbackPollInterval = 250 * time.Millisecond
+	syncRetryInitialBackoff   = 1 * time.Second
+	syncRetryMaxBackoff       = 30 * time.Second
+	opSyncPageFetch           = "sync_page_fetch"
+	opCodexStartTurn          = "codex_start_turn"
+	opMessagePublish          = "publish"
+	opMessageAck              = "ack"
+	opKeepaliveTouch          = "keepalive_touch"
+	opCodexWaitTurnCompletion = "codex_wait_turn_completion"
+	opCodexTurnResult         = "codex_turn_result"
+	opAgnTurn                 = "agn_turn"
+	opClaudeTurn              = "claude_turn"
+	opProcessSignalShutdown   = "process_signal/shutdown"
+	tracingProxyListenAddress = "127.0.0.1:0"
+	mcpLoopbackHost           = "127.0.0.1"
 )
 
 var retryableCodexErrorNotificationTerms = [...]string{
@@ -309,7 +312,10 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 		return nil, err
 	}
 	otlpEndpoint := "http://" + tracingProxy.Address()
-	codexHome, err := writeCodexConfig(cfg.LLMBaseURL, cfg.MCPServers, otlpEndpoint)
+	// Codex exports over OTLP/HTTP and everything else over gRPC; see the otel
+	// block in the codex config for why.
+	codexOTLPEndpoint := "http://" + tracingProxy.HTTPAddress() + "/v1/traces"
+	codexHome, err := writeCodexConfig(cfg.LLMBaseURL, cfg.MCPServers, codexOTLPEndpoint)
 	if err != nil {
 		tracingProxy.Close()
 		_ = setup.gatewayConn.Close()
@@ -331,8 +337,15 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 		codex.WithApprovalHandler(codex.AutoApprovalHandler{}),
 		codex.WithClientInfo("agynd", version),
 	}
-	codexClient, err := newCodexClient(ctx, cfg, options...)
+	// Deadlined, because the handshake is a request to a child process that can
+	// fail to answer -- a codex that rejects its own config exits without a
+	// reply -- and without one the daemon blocked here for good: no logs, no
+	// inbox drain, a container that looks healthy and does nothing.
+	codexCtx, cancelCodex := context.WithTimeout(ctx, codexHandshakeTimeout)
+	codexClient, err := newCodexClient(codexCtx, cfg, options...)
+	cancelCodex()
 	if err != nil {
+		log.Printf("start codex: %v", err)
 		tracingProxy.Close()
 		_ = setup.gatewayConn.Close()
 		return nil, err

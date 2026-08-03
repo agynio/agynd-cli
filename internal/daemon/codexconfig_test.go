@@ -380,7 +380,12 @@ approval_policy = "never"
 sandbox_mode = "danger-full-access"
 
 [otel]
-trace_exporter = { otlp-grpc = { endpoint = %q } }
+# OTLP/HTTP, not gRPC: codex's otlp-grpc exporter fails to build at all in the
+# version shipped in the init image -- it reports "error loading otel config:
+# transport error" against any address, a live listener or a closed port alike --
+# and codex then exits before answering the initialize handshake. protocol is
+# required and binary is the OTLP default encoding.
+trace_exporter = { otlp-http = { endpoint = %q, protocol = "binary" } }
 metrics_exporter = "none"
 exporter = "none"
 
