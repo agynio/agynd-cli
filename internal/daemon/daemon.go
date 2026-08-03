@@ -1220,5 +1220,21 @@ func buildInput(message platform.Message) (string, error) {
 	if text == "" {
 		return "", fmt.Errorf("message %s has no content", message.ID)
 	}
-	return text, nil
+	return messageHeader(message) + text, nil
+}
+
+func messageHeader(message platform.Message) string {
+	var header strings.Builder
+	if threadID := strings.TrimSpace(message.ThreadID); threadID != "" {
+		fmt.Fprintf(&header, "thread: %s\n", threadID)
+	} else {
+		header.WriteString("source: direct\n")
+	}
+	if handle := strings.TrimSpace(message.SenderHandle); handle != "" {
+		fmt.Fprintf(&header, "from: @%s\n", handle)
+	} else if senderID := strings.TrimSpace(message.SenderID); senderID != "" {
+		fmt.Fprintf(&header, "from: %s\n", senderID)
+	}
+	header.WriteString("---\n")
+	return header.String()
 }

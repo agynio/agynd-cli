@@ -104,12 +104,13 @@ func inboxItemFromProto(item *agentsv1.InboxItem) (Message, error) {
 	}
 
 	return Message{
-		ID:          messageID,
-		InboxItemID: id,
-		ThreadID:    threadID,
-		SenderID:    senderID,
-		Body:        item.GetBody(),
-		FileIDs:     fileIDs,
-		CreatedAt:   acceptedAt.AsTime(),
+		ID:           messageID,
+		InboxItemID:  id,
+		ThreadID:     threadID,
+		SenderID:     senderID,
+		SenderHandle: item.GetSenderHandle(),
+		Body:         item.GetBody(),
+		FileIDs:      fileIDs,
+		CreatedAt:    acceptedAt.AsTime(),
 	}, nil
 }

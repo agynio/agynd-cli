@@ -223,8 +223,8 @@ func TestBuildInputText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if got != "hello" {
-		t.Fatalf("expected trimmed text, got %q", got)
+	if got != "source: direct\n---\nhello" {
+		t.Fatalf("expected the header and trimmed text, got %q", got)
 	}
 }
 
@@ -237,7 +237,7 @@ func TestBuildInputFilesOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if got != "agyn://file/file-a\nagyn://file/file-b" {
+	if got != "source: direct\n---\nagyn://file/file-a\nagyn://file/file-b" {
 		t.Fatalf("unexpected file-only input: %q", got)
 	}
 }
@@ -252,7 +252,7 @@ func TestBuildInputTextWithFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if got != "status\nagyn://file/file-a\nagyn://file/file-b" {
+	if got != "source: direct\n---\nstatus\nagyn://file/file-a\nagyn://file/file-b" {
 		t.Fatalf("unexpected text-with-files input: %q", got)
 	}
 }
@@ -894,5 +894,49 @@ func waitForWorkDir(t *testing.T, errCh <-chan error, expectedWorkDir string) {
 			t.Fatalf("expected holder work dir %s, got %s", expectedWorkDir, currentWorkDir)
 		case <-time.After(10 * time.Millisecond):
 		}
+	}
+}
+
+func TestBuildInputCarriesTheThreadAndSender(t *testing.T) {
+	message := platform.Message{
+		ID:       "msg-5",
+		ThreadID: "thread-7",
+		SenderID: "identity-3",
+		Body:     "status?",
+	}
+	got, err := buildInput(message)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got != "thread: thread-7\nfrom: identity-3\n---\nstatus?" {
+		t.Fatalf("unexpected input: %q", got)
+	}
+}
+
+func TestBuildInputMarksDirectItems(t *testing.T) {
+	message := platform.Message{ID: "msg-6", SenderID: "identity-4", Body: "ping"}
+	got, err := buildInput(message)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got != "source: direct\nfrom: identity-4\n---\nping" {
+		t.Fatalf("unexpected input: %q", got)
+	}
+}
+
+func TestBuildInputPrefersTheSenderHandle(t *testing.T) {
+	message := platform.Message{
+		ID:           "msg-7",
+		ThreadID:     "thread-9",
+		SenderID:     "identity-5",
+		SenderHandle: "rowan",
+		Body:         "status?",
+	}
+	got, err := buildInput(message)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got != "thread: thread-9\nfrom: @rowan\n---\nstatus?" {
+		t.Fatalf("unexpected input: %q", got)
 	}
 }
