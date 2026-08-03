@@ -923,3 +923,20 @@ func TestBuildInputMarksDirectItems(t *testing.T) {
 		t.Fatalf("unexpected input: %q", got)
 	}
 }
+
+func TestBuildInputPrefersTheSenderHandle(t *testing.T) {
+	message := platform.Message{
+		ID:           "msg-7",
+		ThreadID:     "thread-9",
+		SenderID:     "identity-5",
+		SenderHandle: "rowan",
+		Body:         "status?",
+	}
+	got, err := buildInput(message)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got != "thread: thread-9\nfrom: @rowan\n---\nstatus?" {
+		t.Fatalf("unexpected input: %q", got)
+	}
+}

@@ -1230,7 +1230,9 @@ func messageHeader(message platform.Message) string {
 	} else {
 		header.WriteString("source: direct\n")
 	}
-	if senderID := strings.TrimSpace(message.SenderID); senderID != "" {
+	if handle := strings.TrimSpace(message.SenderHandle); handle != "" {
+		fmt.Fprintf(&header, "from: @%s\n", handle)
+	} else if senderID := strings.TrimSpace(message.SenderID); senderID != "" {
 		fmt.Fprintf(&header, "from: %s\n", senderID)
 	}
 	header.WriteString("---\n")

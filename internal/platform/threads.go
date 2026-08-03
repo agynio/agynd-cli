@@ -16,9 +16,11 @@ type Message struct {
 	InboxItemID string
 	ThreadID    string
 	SenderID    string
-	Body        string
-	FileIDs     []string
-	CreatedAt   time.Time
+	// SenderHandle is the sender's nickname when the organization holds one.
+	SenderHandle string
+	Body         string
+	FileIDs      []string
+	CreatedAt    time.Time
 }
 
 type Threads struct {
