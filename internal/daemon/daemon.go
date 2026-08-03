@@ -1223,9 +1223,6 @@ func buildInput(message platform.Message) (string, error) {
 	return messageHeader(message) + text, nil
 }
 
-// messageHeader names where an item came from, per agynd-cli.md "Message
-// Formatting". A direct item has no thread and says so, so the agent falls back
-// to its default one.
 func messageHeader(message platform.Message) string {
 	var header strings.Builder
 	if threadID := strings.TrimSpace(message.ThreadID); threadID != "" {
