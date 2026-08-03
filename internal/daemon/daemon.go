@@ -1224,14 +1224,8 @@ func buildInput(message platform.Message) (string, error) {
 }
 
 // messageHeader names where an item came from, per agynd-cli.md "Message
-// Formatting". Without it an agent saw a bare body: it could not tell one
-// thread from another, nor who was asking, and an instance serves many of both.
-//
-// A thread-sourced item names its thread; a direct one says so, because it has
-// none and the agent has to fall back to its default thread. from carries the
-// sender's identity rather than a handle -- nothing resolves an identity back
-// to one, which is the same gap that leaves the chat UI showing "unknown
-// participant" -- so it is emitted as an id until that lookup exists.
+// Formatting". A direct item has no thread and says so, so the agent falls back
+// to its default one.
 func messageHeader(message platform.Message) string {
 	var header strings.Builder
 	if threadID := strings.TrimSpace(message.ThreadID); threadID != "" {
@@ -1242,9 +1236,6 @@ func messageHeader(message platform.Message) string {
 	if senderID := strings.TrimSpace(message.SenderID); senderID != "" {
 		fmt.Fprintf(&header, "from: %s\n", senderID)
 	}
-	// A rule between the fields and the body. Without it a message opening with
-	// something header-shaped reads as another field, and one that does not
-	// still leaves the model to guess where the metadata stops.
 	header.WriteString("---\n")
 	return header.String()
 }
