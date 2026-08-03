@@ -225,7 +225,7 @@ func TestBuildInputText(t *testing.T) {
 	}
 	// Direct, because the message names no thread: the agent has to know that
 	// to fall back to its default thread rather than guess.
-	if got != "source: direct\nhello" {
+	if got != "source: direct\n---\nhello" {
 		t.Fatalf("expected the header and trimmed text, got %q", got)
 	}
 }
@@ -239,7 +239,7 @@ func TestBuildInputFilesOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if got != "source: direct\nagyn://file/file-a\nagyn://file/file-b" {
+	if got != "source: direct\n---\nagyn://file/file-a\nagyn://file/file-b" {
 		t.Fatalf("unexpected file-only input: %q", got)
 	}
 }
@@ -254,7 +254,7 @@ func TestBuildInputTextWithFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if got != "source: direct\nstatus\nagyn://file/file-a\nagyn://file/file-b" {
+	if got != "source: direct\n---\nstatus\nagyn://file/file-a\nagyn://file/file-b" {
 		t.Fatalf("unexpected text-with-files input: %q", got)
 	}
 }
@@ -914,7 +914,7 @@ func TestBuildInputCarriesTheThreadAndSender(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if got != "thread: thread-7\nfrom: identity-3\nstatus?" {
+	if got != "thread: thread-7\nfrom: identity-3\n---\nstatus?" {
 		t.Fatalf("unexpected input: %q", got)
 	}
 }
@@ -927,7 +927,7 @@ func TestBuildInputMarksDirectItems(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if got != "source: direct\nfrom: identity-4\nping" {
+	if got != "source: direct\nfrom: identity-4\n---\nping" {
 		t.Fatalf("unexpected input: %q", got)
 	}
 }

@@ -1242,5 +1242,9 @@ func messageHeader(message platform.Message) string {
 	if senderID := strings.TrimSpace(message.SenderID); senderID != "" {
 		fmt.Fprintf(&header, "from: %s\n", senderID)
 	}
+	// A rule between the fields and the body. Without it a message opening with
+	// something header-shaped reads as another field, and one that does not
+	// still leaves the model to guess where the metadata stops.
+	header.WriteString("---\n")
 	return header.String()
 }
