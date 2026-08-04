@@ -102,16 +102,18 @@ func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daem
 
 func (d *Daemon) handleAgnMessage(ctx context.Context, message platform.Message) error {
 	threadID := strings.TrimSpace(message.ThreadID)
-	if threadID == "" {
-		return fmt.Errorf("message %s missing thread id", message.ID)
-	}
 	inputText, err := buildInput(message)
 	if err != nil {
 		return err
 	}
+	// The instance, not the thread. Agent state is instance-scoped -- an
+	// instance serves many threads and they share one conversation -- and
+	// keying it by thread meant a reply arriving on another thread began a
+	// conversation with no memory of the one that started it. Which thread a
+	// message came from is in its header.
 	result, err := d.agn.Turn(ctx, agnsdk.TurnParams{
 		Prompt:   inputText,
-		ThreadID: threadID,
+		ThreadID: d.selfID(),
 	}, nil)
 	if err != nil {
 		return operationError(
