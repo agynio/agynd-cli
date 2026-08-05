@@ -7,7 +7,7 @@ import (
 
 func TestPrependCLIPathEmpty(t *testing.T) {
 	got := prependCLIPath("")
-	expected := agentPathPrefix()
+	expected := agentBinPath
 	if got != expected {
 		t.Fatalf("expected %q, got %q", expected, got)
 	}
@@ -15,7 +15,7 @@ func TestPrependCLIPathEmpty(t *testing.T) {
 
 func TestPrependCLIPathExisting(t *testing.T) {
 	basePath := "/usr/local/bin"
-	expected := agentPathPrefix() + string(os.PathListSeparator) + basePath
+	expected := agentBinPath + string(os.PathListSeparator) + basePath
 	got := prependCLIPath(basePath)
 	if got != expected {
 		t.Fatalf("expected %q, got %q", expected, got)
