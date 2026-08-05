@@ -40,9 +40,23 @@ func writeAgentConfigRaw(t *testing.T, payload string) string {
 	return configPath
 }
 
+// An image states what it carries, not where the platform mounted it.
+func TestFromEnvRejectsAbsoluteAgentBinary(t *testing.T) {
+	setRequiredEnv(t)
+	configPath := writeAgentConfig(t, "codex", "/agyn/bin/codex")
+
+	_, err := fromEnv(configPath)
+	if err == nil {
+		t.Fatal("expected an absolute bin to be rejected")
+	}
+	if !strings.Contains(err.Error(), "must be relative to the volume") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestFromEnvValid(t *testing.T) {
 	setRequiredEnv(t)
-	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	configPath := writeAgentConfig(t, "codex", "bin/codex")
 	t.Setenv("WORKSPACE_DIR", "/tmp/workdir")
 	t.Setenv("GATEWAY_ADDRESS", "gateway:1234")
 	t.Setenv("TRACING_ADDRESS", "tracing:5678")
@@ -78,7 +92,7 @@ func TestFromEnvValid(t *testing.T) {
 	if cfg.SDK != "codex" {
 		t.Fatalf("unexpected sdk: %s", cfg.SDK)
 	}
-	if cfg.AgentBinary != "/opt/bin/codex" {
+	if cfg.AgentBinary != "/agyn/bin/codex" {
 		t.Fatalf("unexpected agent binary: %s", cfg.AgentBinary)
 	}
 	if cfg.WorkDir != "/tmp/workdir" {
@@ -91,7 +105,7 @@ func TestFromEnvValid(t *testing.T) {
 
 func TestFromEnvLLMAPITokenDefault(t *testing.T) {
 	setRequiredEnv(t)
-	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	configPath := writeAgentConfig(t, "codex", "bin/codex")
 	t.Setenv("LLM_API_TOKEN", "")
 
 	cfg, err := fromEnv(configPath)
@@ -116,7 +130,7 @@ func TestFromEnvMissingRequired(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			setRequiredEnv(t)
-			configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+			configPath := writeAgentConfig(t, "codex", "bin/codex")
 			t.Setenv(test.missing, "")
 			_, err := fromEnv(configPath)
 			if err == nil {
@@ -131,7 +145,7 @@ func TestFromEnvMissingRequired(t *testing.T) {
 
 func TestFromEnvDefaults(t *testing.T) {
 	setRequiredEnv(t)
-	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	configPath := writeAgentConfig(t, "codex", "bin/codex")
 	t.Setenv("WORKSPACE_DIR", "")
 
 	cfg, err := fromEnv(configPath)
@@ -145,7 +159,7 @@ func TestFromEnvDefaults(t *testing.T) {
 
 func TestFromEnvGatewayDefault(t *testing.T) {
 	setRequiredEnv(t)
-	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	configPath := writeAgentConfig(t, "codex", "bin/codex")
 	t.Setenv("GATEWAY_ADDRESS", "")
 
 	cfg, err := fromEnv(configPath)
@@ -159,7 +173,7 @@ func TestFromEnvGatewayDefault(t *testing.T) {
 
 func TestFromEnvTracingAddressDefault(t *testing.T) {
 	setRequiredEnv(t)
-	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	configPath := writeAgentConfig(t, "codex", "bin/codex")
 	t.Setenv("TRACING_ADDRESS", "")
 
 	cfg, err := fromEnv(configPath)
@@ -173,7 +187,7 @@ func TestFromEnvTracingAddressDefault(t *testing.T) {
 
 func TestFromEnvTracingAddressCustom(t *testing.T) {
 	setRequiredEnv(t)
-	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	configPath := writeAgentConfig(t, "codex", "bin/codex")
 	t.Setenv("TRACING_ADDRESS", "tracing.local:9999")
 
 	cfg, err := fromEnv(configPath)
@@ -187,7 +201,7 @@ func TestFromEnvTracingAddressCustom(t *testing.T) {
 
 func TestFromEnvThreadID(t *testing.T) {
 	setRequiredEnv(t)
-	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	configPath := writeAgentConfig(t, "codex", "bin/codex")
 	t.Setenv("THREAD_ID", "  9E54A9CE-F2E1-4B5F-9C91-8F4C77554C30 ")
 
 	cfg, err := fromEnv(configPath)
@@ -201,7 +215,7 @@ func TestFromEnvThreadID(t *testing.T) {
 
 func TestFromEnvWorkloadID(t *testing.T) {
 	setRequiredEnv(t)
-	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	configPath := writeAgentConfig(t, "codex", "bin/codex")
 	t.Setenv("WORKLOAD_ID", "  94F0F199-7F3A-4B7C-9B2E-9E8C4200BA87 ")
 
 	cfg, err := fromEnv(configPath)
@@ -215,7 +229,7 @@ func TestFromEnvWorkloadID(t *testing.T) {
 
 func TestFromEnvWorkloadIDEmpty(t *testing.T) {
 	setRequiredEnv(t)
-	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	configPath := writeAgentConfig(t, "codex", "bin/codex")
 	t.Setenv("WORKLOAD_ID", "")
 
 	_, err := fromEnv(configPath)
@@ -229,7 +243,7 @@ func TestFromEnvWorkloadIDEmpty(t *testing.T) {
 
 func TestFromEnvWorkloadIDInvalid(t *testing.T) {
 	setRequiredEnv(t)
-	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	configPath := writeAgentConfig(t, "codex", "bin/codex")
 	t.Setenv("WORKLOAD_ID", "not-a-uuid")
 
 	_, err := fromEnv(configPath)
@@ -245,7 +259,7 @@ func TestFromEnvWorkloadIDInvalid(t *testing.T) {
 // one. Only the thread-scoped callers that predate instances set THREAD_ID.
 func TestFromEnvThreadIDEmpty(t *testing.T) {
 	setRequiredEnv(t)
-	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	configPath := writeAgentConfig(t, "codex", "bin/codex")
 	t.Setenv("THREAD_ID", "")
 
 	cfg, err := fromEnv(configPath)
@@ -259,7 +273,7 @@ func TestFromEnvThreadIDEmpty(t *testing.T) {
 
 func TestFromEnvAgentInstanceID(t *testing.T) {
 	setRequiredEnv(t)
-	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	configPath := writeAgentConfig(t, "codex", "bin/codex")
 	t.Setenv("AGENT_INSTANCE_ID", "  1C2F0F4E-8B9D-4A5B-9B3C-1D2E3F4A5B6C ")
 
 	cfg, err := fromEnv(configPath)
@@ -273,7 +287,7 @@ func TestFromEnvAgentInstanceID(t *testing.T) {
 
 func TestFromEnvAgentInstanceIDInvalid(t *testing.T) {
 	setRequiredEnv(t)
-	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	configPath := writeAgentConfig(t, "codex", "bin/codex")
 	t.Setenv("AGENT_INSTANCE_ID", "not-a-uuid")
 
 	_, err := fromEnv(configPath)
@@ -287,7 +301,7 @@ func TestFromEnvAgentInstanceIDInvalid(t *testing.T) {
 
 func TestFromEnvThreadIDInvalid(t *testing.T) {
 	setRequiredEnv(t)
-	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	configPath := writeAgentConfig(t, "codex", "bin/codex")
 	t.Setenv("THREAD_ID", "not-a-uuid")
 
 	_, err := fromEnv(configPath)
@@ -301,7 +315,7 @@ func TestFromEnvThreadIDInvalid(t *testing.T) {
 
 func TestFromEnvLLMBaseURLDefault(t *testing.T) {
 	setRequiredEnv(t)
-	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	configPath := writeAgentConfig(t, "codex", "bin/codex")
 	t.Setenv("LLM_BASE_URL", "")
 
 	cfg, err := fromEnv(configPath)
@@ -315,7 +329,7 @@ func TestFromEnvLLMBaseURLDefault(t *testing.T) {
 
 func TestFromEnvMCPServersEmpty(t *testing.T) {
 	setRequiredEnv(t)
-	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	configPath := writeAgentConfig(t, "codex", "bin/codex")
 	t.Setenv("AGENT_MCP_SERVERS", "")
 
 	cfg, err := fromEnv(configPath)
@@ -329,7 +343,7 @@ func TestFromEnvMCPServersEmpty(t *testing.T) {
 
 func TestFromEnvMCPPort(t *testing.T) {
 	setRequiredEnv(t)
-	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	configPath := writeAgentConfig(t, "codex", "bin/codex")
 	t.Setenv("AGENT_MCP_SERVERS", "")
 	t.Setenv("MCP_PORT", "8123")
 
@@ -344,7 +358,7 @@ func TestFromEnvMCPPort(t *testing.T) {
 
 func TestFromEnvMCPServersSingle(t *testing.T) {
 	setRequiredEnv(t)
-	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	configPath := writeAgentConfig(t, "codex", "bin/codex")
 	t.Setenv("AGENT_MCP_SERVERS", "memory:8100")
 
 	cfg, err := fromEnv(configPath)
@@ -362,7 +376,7 @@ func TestFromEnvMCPServersSingle(t *testing.T) {
 
 func TestFromEnvMCPServersMultiple(t *testing.T) {
 	setRequiredEnv(t)
-	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	configPath := writeAgentConfig(t, "codex", "bin/codex")
 	t.Setenv("AGENT_MCP_SERVERS", "memory:8100, cache:8200")
 
 	cfg, err := fromEnv(configPath)
@@ -396,7 +410,7 @@ func TestFromEnvMCPServersMalformed(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			setRequiredEnv(t)
-			configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+			configPath := writeAgentConfig(t, "codex", "bin/codex")
 			t.Setenv("AGENT_MCP_SERVERS", test.value)
 
 			_, err := fromEnv(configPath)
@@ -412,7 +426,7 @@ func TestFromEnvMCPServersMalformed(t *testing.T) {
 
 func TestFromEnvMCPPortInvalid(t *testing.T) {
 	setRequiredEnv(t)
-	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	configPath := writeAgentConfig(t, "codex", "bin/codex")
 	t.Setenv("MCP_PORT", "70000")
 
 	_, err := fromEnv(configPath)
@@ -461,7 +475,7 @@ func TestFromEnvMissingConfigFields(t *testing.T) {
 
 func TestFromEnvAgentModeDefault(t *testing.T) {
 	setRequiredEnv(t)
-	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	configPath := writeAgentConfig(t, "codex", "bin/codex")
 	t.Setenv("AGYND_MODE", "")
 
 	cfg, err := fromEnv(configPath)
@@ -520,7 +534,7 @@ func TestFromEnvHolderModeWorkDir(t *testing.T) {
 
 func TestFromEnvInvalidMode(t *testing.T) {
 	setRequiredEnv(t)
-	configPath := writeAgentConfig(t, "codex", "/opt/bin/codex")
+	configPath := writeAgentConfig(t, "codex", "bin/codex")
 	t.Setenv("AGYND_MODE", "sandbox")
 
 	_, err := fromEnv(configPath)

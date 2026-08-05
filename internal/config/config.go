@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -12,7 +13,10 @@ import (
 	"github.com/google/uuid"
 )
 
-const agentConfigPath = "/agyn/config.json"
+const (
+	agentVolumePath = "/agyn"
+	agentConfigPath = agentVolumePath + "/config.json"
+)
 
 const (
 	ModeAgent            = "agent"
@@ -127,6 +131,11 @@ func fromEnv(configPath string) (Config, error) {
 	if agentBinary == "" {
 		return Config{}, fmt.Errorf("%s missing bin", configPath)
 	}
+	// An image states what it carries, not where the platform mounted it.
+	if filepath.IsAbs(agentBinary) {
+		return Config{}, fmt.Errorf("%s bin %q must be relative to the volume", configPath, agentBinary)
+	}
+	agentBinary = filepath.Join(agentVolumePath, agentBinary)
 
 	workDir := strings.TrimSpace(os.Getenv("WORKSPACE_DIR"))
 	if workDir == "" {
