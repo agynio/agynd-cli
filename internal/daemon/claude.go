@@ -54,7 +54,7 @@ func newClaudeDaemon(ctx context.Context, cfg config.Config, version string) (*D
 		WorkDir:    cfg.WorkDir,
 		Env: []string{
 			"PATH=" + agentPathValue(),
-			"LD_LIBRARY_PATH=/agyn-bin/lib",
+			"LD_LIBRARY_PATH=/agyn/bin/lib",
 			"CLAUDE_CODE_ENABLE_TELEMETRY=1",
 			"CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1",
 			"OTEL_TRACES_EXPORTER=otlp",

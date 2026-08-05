@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const agentConfigPath = "/agyn-bin/config.json"
+const agentConfigPath = "/agyn/bin/config.json"
 
 const (
 	ModeAgent            = "agent"

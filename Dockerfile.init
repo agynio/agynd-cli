@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.8
 #
 # The init-container form of agynd. Its entire job is to copy the binary into
-# the shared /agyn-bin volume every workload mounts, which is what the -init
+# the shared /agyn/bin volume every workload mounts, which is what the -init
 # suffix records: an image from this repository that ran as something other than
 # an init container would take a different suffix rather than overload this one.
 #
@@ -55,4 +55,4 @@ COPY --from=build /out/agynd /opt/agyn/agynd
 # It runs as root because the emptyDir it writes into is root-owned on a fresh
 # Pod; the copied binary is world-executable so the main container can run it
 # whatever user its image defines.
-ENTRYPOINT ["/bin/sh", "-c", "set -e; mkdir -p /agyn-bin; cp /opt/agyn/agynd /agyn-bin/agynd; chmod 0755 /agyn-bin/agynd"]
+ENTRYPOINT ["/bin/sh", "-c", "set -e; mkdir -p /agyn/bin; cp /opt/agyn/agynd /agyn/bin/agynd; chmod 0755 /agyn/bin/agynd"]

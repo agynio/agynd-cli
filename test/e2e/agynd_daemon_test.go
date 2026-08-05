@@ -143,19 +143,19 @@ func buildAgynd(t *testing.T) string {
 func installAgentRuntimeConfig(t *testing.T, agentBinary string) {
 	t.Helper()
 	runner := newPrivilegedRunner(t)
-	runner.run(t, "mkdir", "-p", "/agyn-bin")
+	runner.run(t, "mkdir", "-p", "/agyn/bin")
 
 	backupPath := filepath.Join(t.TempDir(), "config.json.backup")
-	hadExisting := fileExists("/agyn-bin/config.json")
+	hadExisting := fileExists("/agyn/bin/config.json")
 	if hadExisting {
-		runner.run(t, "cp", "/agyn-bin/config.json", backupPath)
+		runner.run(t, "cp", "/agyn/bin/config.json", backupPath)
 	}
 	t.Cleanup(func() {
 		if hadExisting {
-			runner.run(t, "cp", backupPath, "/agyn-bin/config.json")
+			runner.run(t, "cp", backupPath, "/agyn/bin/config.json")
 			return
 		}
-		runner.run(t, "rm", "-f", "/agyn-bin/config.json")
+		runner.run(t, "rm", "-f", "/agyn/bin/config.json")
 	})
 
 	configPath := filepath.Join(t.TempDir(), "config.json")
@@ -163,8 +163,8 @@ func installAgentRuntimeConfig(t *testing.T, agentBinary string) {
 	if err := os.WriteFile(configPath, []byte(payload), 0o600); err != nil {
 		t.Fatalf("write test config: %v", err)
 	}
-	runner.run(t, "cp", configPath, "/agyn-bin/config.json")
-	runner.run(t, "chmod", "0644", "/agyn-bin/config.json")
+	runner.run(t, "cp", configPath, "/agyn/bin/config.json")
+	runner.run(t, "chmod", "0644", "/agyn/bin/config.json")
 }
 
 type privilegedRunner struct {
@@ -179,7 +179,7 @@ func newPrivilegedRunner(t *testing.T) privilegedRunner {
 	if os.Geteuid() == 0 {
 		return privilegedRunner{}
 	}
-	t.Fatal("sudo is required to install /agyn-bin/config.json for agynd e2e")
+	t.Fatal("sudo is required to install /agyn/bin/config.json for agynd e2e")
 	return privilegedRunner{}
 }
 
