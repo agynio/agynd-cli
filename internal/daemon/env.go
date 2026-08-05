@@ -6,8 +6,8 @@ import (
 )
 
 const (
-	cliPathPrefix    = "/agyn-bin/cli"
-	agentBinPath     = "/agyn-bin"
+	cliPathPrefix    = "/agyn/bin/cli"
+	agentBinPath     = "/agyn/bin"
 	codexDefaultHome = "/tmp"
 )
 
