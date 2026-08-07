@@ -13,6 +13,19 @@ import (
 	codex "github.com/agynio/codex-sdk-go"
 )
 
+// codexNativeConfigTemplate is the same file minus the endpoint: no
+// model_provider and no [model_providers] block, so codex talks to its own
+// vendor. Tracing and the mcp_servers appended below are unaffected.
+const codexNativeConfigTemplate = `approval_policy = "never"
+sandbox_mode = "danger-full-access"
+
+[otel]
+# See the platform template for why this is OTLP/HTTP rather than gRPC.
+trace_exporter = { otlp-http = { endpoint = %q, protocol = "binary" } }
+metrics_exporter = "none"
+exporter = "none"
+`
+
 const codexConfigTemplate = `model_provider = "platform"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
@@ -83,25 +96,25 @@ var codexProxyEnvVars = []string{
 	codexEnvAllProxyLower,
 }
 
-func writeCodexConfig(llmBaseURL string, mcpServers []config.MCPServer, otlpEndpoint string) (string, error) {
+func writeCodexConfig(cfg config.Config, otlpEndpoint string) (string, error) {
 	codexHome := filepath.Join(codexHomeEnv(), ".codex")
 	if err := os.MkdirAll(codexHome, 0o700); err != nil {
 		return "", fmt.Errorf("create codex home dir: %w", err)
 	}
 	configPath := filepath.Join(codexHome, "config.toml")
-	payload := codexConfig(llmBaseURL, mcpServers, otlpEndpoint)
+	payload := codexConfig(cfg, otlpEndpoint)
 	if err := os.WriteFile(configPath, []byte(payload), 0o600); err != nil {
 		return "", fmt.Errorf("write codex config: %w", err)
 	}
 	return codexHome, nil
 }
 
-func codexConfig(llmBaseURL string, mcpServers []config.MCPServer, otlpEndpoint string) string {
-	apiKeyEnv := codexAPIKeyEnv
-	if isZitiLLMBaseURL(llmBaseURL) {
-		apiKeyEnv = ""
+func codexConfig(cfg config.Config, otlpEndpoint string) string {
+	payload := codexPlatformConfig(cfg.LLMBaseURL, otlpEndpoint)
+	if cfg.LLMNative {
+		payload = fmt.Sprintf(codexNativeConfigTemplate, otlpEndpoint)
 	}
-	payload := fmt.Sprintf(codexConfigTemplate, otlpEndpoint, llmBaseURL, apiKeyEnv)
+	mcpServers := cfg.MCPServers
 	if len(mcpServers) == 0 {
 		return payload
 	}
@@ -114,6 +127,14 @@ func codexConfig(llmBaseURL string, mcpServers []config.MCPServer, otlpEndpoint 
 	return builder.String()
 }
 
+func codexPlatformConfig(llmBaseURL, otlpEndpoint string) string {
+	apiKeyEnv := codexAPIKeyEnv
+	if isZitiLLMBaseURL(llmBaseURL) {
+		apiKeyEnv = ""
+	}
+	return fmt.Sprintf(codexConfigTemplate, otlpEndpoint, llmBaseURL, apiKeyEnv)
+}
+
 func codexEnv(cfg config.Config, codexHome, codexHomeValue, otlpEndpoint string) map[string]string {
 	env := map[string]string{
 		codexEnvPath:                     agentPathValue(),
@@ -121,7 +142,9 @@ func codexEnv(cfg config.Config, codexHome, codexHomeValue, otlpEndpoint string)
 		codexEnvHome:                     codexHomeValue,
 		codexEnvOTELExporterOTLPEndpoint: otlpEndpoint,
 	}
-	if isZitiLLMBaseURL(cfg.LLMBaseURL) {
+	// Native mode carries no platform credential at all: the placeholder codex
+	// reads is on the container, and the proxy replaces it upstream.
+	if cfg.LLMNative || isZitiLLMBaseURL(cfg.LLMBaseURL) {
 		noProxyValue := zitiNoProxyValue(
 			os.Getenv(codexEnvNoProxy),
 			os.Getenv(codexEnvNoProxyLower),
@@ -174,7 +197,10 @@ func splitNoProxy(value string) []string {
 }
 
 func newCodexClient(ctx context.Context, cfg config.Config, options ...codex.Option) (codexClient, error) {
-	if !isZitiLLMBaseURL(cfg.LLMBaseURL) {
+	// Native mode is the one case where the ambient auth variables are the
+	// point: the placeholder lives in them, and codex refuses to start without
+	// one. Only the platform path strips them.
+	if cfg.LLMNative || !isZitiLLMBaseURL(cfg.LLMBaseURL) {
 		return codex.NewClient(ctx, options...)
 	}
 	return withoutCodexAuthEnv(func() (codexClient, error) {

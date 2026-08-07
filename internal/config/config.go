@@ -53,11 +53,21 @@ type Config struct {
 	WorkloadID  string
 	LLMBaseURL  string
 	LLMAPIToken string
-	SDK         string
-	AgentBinary string
-	WorkDir     string
-	MCPServers  []MCPServer
-	MCPPort     *int
+	// LLMNative leaves the agent CLI in its stock configuration: it addresses
+	// its vendor directly and interception happens at the network layer, so the
+	// container is never told the proxy exists. Delivered as an environment
+	// variable rather than fetched, so it is knowable in holder mode where
+	// nothing is being prepared.
+	LLMNative bool
+	// LLMModelName pins a model through the CLI's own model setting. Unset --
+	// the common case, and always the case for a sandbox -- leaves the CLI on
+	// its own default and its own picker.
+	LLMModelName string
+	SDK          string
+	AgentBinary  string
+	WorkDir      string
+	MCPServers   []MCPServer
+	MCPPort      *int
 }
 
 func FromEnv() (Config, error) {
@@ -110,6 +120,8 @@ func fromEnv(configPath string) (Config, error) {
 	if llmBaseURL == "" {
 		llmBaseURL = "http://llm-proxy.ziti:443/v1"
 	}
+	llmNative := strings.EqualFold(strings.TrimSpace(os.Getenv("LLM_MODE")), "native")
+	llmModelName := strings.TrimSpace(os.Getenv("LLM_MODEL_NAME"))
 	llmAPIToken := strings.TrimSpace(os.Getenv("LLM_API_TOKEN"))
 	if llmAPIToken == "" {
 		llmAPIToken = "platform"
@@ -158,6 +170,8 @@ func fromEnv(configPath string) (Config, error) {
 		WorkloadID:      workloadID,
 		LLMBaseURL:      llmBaseURL,
 		LLMAPIToken:     llmAPIToken,
+		LLMNative:       llmNative,
+		LLMModelName:    llmModelName,
 		SDK:             sdk,
 		AgentBinary:     agentBinary,
 		WorkDir:         workDir,

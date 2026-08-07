@@ -27,7 +27,7 @@ func newClaudeDaemon(ctx context.Context, cfg config.Config, version string) (*D
 		return nil, err
 	}
 
-	if err := writeClaudeSettings(claudeBaseURL(cfg.LLMBaseURL), cfg.LLMAPIToken, cfg.MCPServers); err != nil {
+	if err := writeClaudeSettings(claudeBaseURL(cfg.LLMBaseURL), cfg.LLMAPIToken, cfg.MCPServers, cfg.LLMNative); err != nil {
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}
@@ -65,12 +65,17 @@ func newClaudeDaemon(ctx context.Context, cfg config.Config, version string) (*D
 			"IS_SANDBOX=1",
 		},
 	}
-	if model := strings.TrimSpace(setup.agent.GetModel()); model != "" {
+	if model := claudeModel(cfg, setup.agent.GetModel()); model != "" {
 		options.Model = model
-		options.Env = append(options.Env,
-			"ANTHROPIC_MODEL="+model,
-			"ANTHROPIC_CUSTOM_MODEL_OPTION="+model,
-		)
+		if !cfg.LLMNative {
+			// A platform model is a UUID the vendor has never heard of, so the
+			// CLI has to be told it is a model at all. A native model name is
+			// the vendor's own and needs no such help.
+			options.Env = append(options.Env,
+				"ANTHROPIC_MODEL="+model,
+				"ANTHROPIC_CUSTOM_MODEL_OPTION="+model,
+			)
+		}
 	}
 	if role := strings.TrimSpace(setup.agent.GetRole()); role != "" {
 		options.SystemPrompt = role
@@ -139,4 +144,14 @@ func (d *Daemon) handleClaudeMessage(ctx context.Context, message platform.Messa
 		return err
 	}
 	return nil
+}
+
+// claudeModel picks what to pin the CLI to: the platform Model UUID the proxy
+// resolves, or the vendor's own model name. Unset in native mode -- the common
+// case -- leaves the CLI on its own default and its own picker.
+func claudeModel(cfg config.Config, platformModel string) string {
+	if cfg.LLMNative {
+		return strings.TrimSpace(cfg.LLMModelName)
+	}
+	return strings.TrimSpace(platformModel)
 }

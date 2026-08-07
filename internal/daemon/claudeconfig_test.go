@@ -16,7 +16,7 @@ func TestWriteClaudeSettings(t *testing.T) {
 
 	baseURL := "https://example.com"
 	apiKey := "test-api-key"
-	if err := writeClaudeSettings(baseURL, apiKey, nil); err != nil {
+	if err := writeClaudeSettings(baseURL, apiKey, nil, false); err != nil {
 		t.Fatalf("expected settings to be written, got %v", err)
 	}
 
@@ -73,7 +73,7 @@ func TestWriteClaudeSettingsWithMCPServers(t *testing.T) {
 		{Name: "memory", Port: 8100},
 		{Name: "cache", Port: 8200},
 	}
-	if err := writeClaudeSettings(baseURL, apiKey, mcpServers); err != nil {
+	if err := writeClaudeSettings(baseURL, apiKey, mcpServers, false); err != nil {
 		t.Fatalf("expected settings to be written, got %v", err)
 	}
 
