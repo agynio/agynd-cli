@@ -37,8 +37,12 @@ type MCPServer struct {
 }
 
 type Config struct {
-	Mode            string
-	AgentID         uuid.UUID
+	Mode    string
+	AgentID uuid.UUID
+	// EnvironmentID names the environment this workload runs, whose MCPs and
+	// init scripts apply alongside the agent's. Empty for an agent that names no
+	// environment.
+	EnvironmentID   string
 	AgentInstanceID uuid.UUID
 	GatewayAddress  string
 	TracingAddress  string
@@ -73,6 +77,7 @@ func fromEnv(configPath string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	environmentID := strings.TrimSpace(os.Getenv("ENVIRONMENT_ID"))
 	gatewayAddress := strings.TrimSpace(os.Getenv("GATEWAY_ADDRESS"))
 	if gatewayAddress == "" {
 		gatewayAddress = "gateway.ziti:443"
@@ -145,6 +150,7 @@ func fromEnv(configPath string) (Config, error) {
 	return Config{
 		Mode:            mode,
 		AgentID:         agentID,
+		EnvironmentID:   environmentID,
 		AgentInstanceID: agentInstanceID,
 		GatewayAddress:  gatewayAddress,
 		TracingAddress:  tracingAddress,
