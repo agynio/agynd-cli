@@ -158,6 +158,12 @@ func New(ctx context.Context, cfg config.Config, version string) (*Daemon, error
 	case SDKCodex:
 		return newCodexDaemon(ctx, cfg, version)
 	case SDKAgn:
+		if cfg.LLMNative {
+			// agn has no vendor of its own to be intercepted at: it calls the
+			// platform LLM Proxy by a platform Model UUID, which a native
+			// environment's agents do not carry.
+			return nil, fmt.Errorf("the agn SDK is not supported in native LLM mode")
+		}
 		return newAgnDaemon(ctx, cfg, version)
 	case SDKClaude:
 		return newClaudeDaemon(ctx, cfg, version)
@@ -313,8 +319,9 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 	otlpEndpoint := "http://" + tracingProxy.Address()
 	// Codex exports over OTLP/HTTP and everything else over gRPC; see the otel
 	// block in the codex config for why.
+	// The collector root: codex wants a per-signal URL, appended per exporter.
 	codexOTLPEndpoint := "http://" + tracingProxy.HTTPAddress()
-	codexHome, err := writeCodexConfig(cfg.LLMBaseURL, cfg.MCPServers, codexOTLPEndpoint)
+	codexHome, err := writeCodexConfig(cfg, codexOTLPEndpoint)
 	if err != nil {
 		tracingProxy.Close()
 		_ = setup.gatewayConn.Close()
@@ -735,8 +742,12 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 	if err != nil {
 		return err
 	}
-	if err := waitForZitiLLMService(ctx, d.cfg.LLMBaseURL, llmReadyTimeout); err != nil {
-		return fmt.Errorf("wait for LLM service before codex turn: %w", err)
+	// Native mode does not route through the LLM Proxy, so there is nothing
+	// here to wait for -- the vendor host is intercepted on dial.
+	if !d.cfg.LLMNative {
+		if err := waitForZitiLLMService(ctx, d.cfg.LLMBaseURL, llmReadyTimeout); err != nil {
+			return fmt.Errorf("wait for LLM service before codex turn: %w", err)
+		}
 	}
 	turnCtx, cancel := context.WithTimeout(ctx, turnStartTimeout)
 	turnResp, err := d.codex.StartTurn(turnCtx, &codex.TurnStartParams{
@@ -1142,6 +1153,16 @@ func validateMCPProbePayload(payload []byte) error {
 	return nil
 }
 
+// codexModel picks what to pin the thread to: the platform Model UUID the
+// proxy resolves, or the vendor's own model name. Unset in native mode leaves
+// codex on its own default.
+func codexModel(cfg config.Config, platformModel string) string {
+	if cfg.LLMNative {
+		return strings.TrimSpace(cfg.LLMModelName)
+	}
+	return strings.TrimSpace(platformModel)
+}
+
 type codexThreadDefaults struct {
 	model                 *string
 	baseInstructions      *string
@@ -1151,7 +1172,7 @@ type codexThreadDefaults struct {
 
 func (d *Daemon) codexThreadDefaults() codexThreadDefaults {
 	defaults := codexThreadDefaults{}
-	if model := strings.TrimSpace(d.agent.GetModel()); model != "" {
+	if model := codexModel(d.cfg, d.agent.GetModel()); model != "" {
 		defaults.model = &model
 	}
 	if role := strings.TrimSpace(d.agent.GetRole()); role != "" {

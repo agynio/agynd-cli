@@ -41,7 +41,7 @@ func TestWriteCodexConfig(t *testing.T) {
 	t.Setenv("HOME", tmpHome)
 
 	baseURL := "https://example.com"
-	codexHome, err := writeCodexConfig(baseURL, nil, testCodexOTLPEndpoint)
+	codexHome, err := writeCodexConfig(config.Config{LLMBaseURL: baseURL, MCPServers: nil}, testCodexOTLPEndpoint)
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
@@ -67,7 +67,7 @@ func TestWriteCodexConfigHomeFallback(t *testing.T) {
 	t.Setenv("HOME", "")
 
 	baseURL := "https://example.com"
-	codexHome, err := writeCodexConfig(baseURL, nil, testCodexOTLPEndpoint)
+	codexHome, err := writeCodexConfig(config.Config{LLMBaseURL: baseURL, MCPServers: nil}, testCodexOTLPEndpoint)
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
@@ -94,7 +94,7 @@ func TestWriteCodexConfigForZitiOmitsAPIKeyEnv(t *testing.T) {
 	t.Setenv("HOME", tmpHome)
 
 	baseURL := "http://llm-proxy.ziti:443/v1"
-	codexHome, err := writeCodexConfig(baseURL, nil, testCodexOTLPEndpoint)
+	codexHome, err := writeCodexConfig(config.Config{LLMBaseURL: baseURL, MCPServers: nil}, testCodexOTLPEndpoint)
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
@@ -120,7 +120,7 @@ func TestWriteCodexConfigWithMCPServers(t *testing.T) {
 		{Name: "memory", Port: 8100},
 		{Name: "cache", Port: 8200},
 	}
-	codexHome, err := writeCodexConfig(baseURL, mcpServers, testCodexOTLPEndpoint)
+	codexHome, err := writeCodexConfig(config.Config{LLMBaseURL: baseURL, MCPServers: mcpServers}, testCodexOTLPEndpoint)
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
@@ -301,7 +301,7 @@ func TestZitiCodexProcessReceivesNoAuthEnvConfig(t *testing.T) {
 	}
 
 	env := codexEnv(cfg, "/tmp/.codex", "/tmp", testCodexOTLPEndpoint)
-	configPayload := codexConfig(cfg.LLMBaseURL, nil, testCodexOTLPEndpoint)
+	configPayload := codexConfig(config.Config{LLMBaseURL: cfg.LLMBaseURL, MCPServers: nil}, testCodexOTLPEndpoint)
 	seenEnv := map[string]bool{}
 	_, err := withoutCodexAuthEnv(func() (codexClient, error) {
 		for _, key := range codexAuthEnvVars {

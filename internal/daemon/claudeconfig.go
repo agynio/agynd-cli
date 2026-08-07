@@ -27,7 +27,13 @@ type claudeMCPServer struct {
 	URL  string `json:"url"`
 }
 
-func writeClaudeSettings(llmBaseURL, apiKey string, mcpServers []config.MCPServer) error {
+// writeClaudeSettings writes ~/.claude/settings.json. In native mode the
+// endpoint and credential keys are omitted -- the CLI addresses its vendor
+// directly and the placeholder credential comes from the container spec -- but
+// the file is still written, because permissions and mcpServers live in the
+// same document and dropping them would restore interactive tool approval and
+// take the environment's MCP wiring with it.
+func writeClaudeSettings(llmBaseURL, apiKey string, mcpServers []config.MCPServer, native bool) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("resolve home directory: %w", err)
@@ -56,12 +62,18 @@ func writeClaudeSettings(llmBaseURL, apiKey string, mcpServers []config.MCPServe
 			},
 			Deny: []string{},
 		},
+		// Neither of these is endpoint or credential configuration, and both
+		// matter more in native mode than in platform mode: only the vendor's
+		// API host is intercepted, so any other call the CLI makes on its own
+		// reaches nothing and waits for a timeout.
 		Env: map[string]string{
-			"ANTHROPIC_BASE_URL":                       llmBaseURL,
-			"ANTHROPIC_API_KEY":                        apiKey,
 			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
 			"DISABLE_AUTOUPDATER":                      "1",
 		},
+	}
+	if !native {
+		settings.Env["ANTHROPIC_BASE_URL"] = llmBaseURL
+		settings.Env["ANTHROPIC_API_KEY"] = apiKey
 	}
 	if len(mcpServers) > 0 {
 		settings.MCPServers = make(map[string]claudeMCPServer, len(mcpServers))
