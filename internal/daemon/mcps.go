@@ -24,21 +24,59 @@ type mcpDefinition struct {
 	CreatedAt time.Time
 }
 
-func listMCPs(ctx context.Context, client mcpsClient, agentID string) ([]mcpDefinition, error) {
+// listMCPs merges the environment's servers with the agent's. Both run in an
+// agent workload; a sandbox has no agent and gets the environment's alone. On a
+// name collision the agent-level server wins, the rule ENV follows.
+func listMCPs(ctx context.Context, client mcpsClient, agentID string, environmentID string) ([]mcpDefinition, error) {
 	if client == nil {
 		return nil, fmt.Errorf("mcps client is required")
 	}
 	agentID = strings.TrimSpace(agentID)
-	if agentID == "" {
-		return nil, fmt.Errorf("agent id is required")
+	environmentID = strings.TrimSpace(environmentID)
+	if agentID == "" && environmentID == "" {
+		return nil, fmt.Errorf("agent id or environment id is required")
 	}
+	byName := map[string]mcpDefinition{}
+	if environmentID != "" {
+		environmentMCPs, err := listMCPsForTarget(ctx, client, &agentsv1.ListMcpsRequest{EnvironmentId: environmentID})
+		if err != nil {
+			return nil, err
+		}
+		for _, mcp := range environmentMCPs {
+			byName[mcp.Name] = mcp
+		}
+	}
+	if agentID != "" {
+		agentMCPs, err := listMCPsForTarget(ctx, client, &agentsv1.ListMcpsRequest{AgentId: agentID})
+		if err != nil {
+			return nil, err
+		}
+		for _, mcp := range agentMCPs {
+			byName[mcp.Name] = mcp
+		}
+	}
+	mcps := make([]mcpDefinition, 0, len(byName))
+	for _, mcp := range byName {
+		mcps = append(mcps, mcp)
+	}
+	sort.Slice(mcps, func(i, j int) bool {
+		if mcps[i].CreatedAt.Equal(mcps[j].CreatedAt) {
+			return mcps[i].ID < mcps[j].ID
+		}
+		return mcps[i].CreatedAt.Before(mcps[j].CreatedAt)
+	})
+	return mcps, nil
+}
+
+func listMCPsForTarget(ctx context.Context, client mcpsClient, req *agentsv1.ListMcpsRequest) ([]mcpDefinition, error) {
 	var mcps []mcpDefinition
 	pageToken := ""
 	for {
 		resp, err := client.ListMcps(ctx, &agentsv1.ListMcpsRequest{
-			AgentId:   agentID,
-			PageSize:  mcpsPageSize,
-			PageToken: pageToken,
+			AgentId:       req.GetAgentId(),
+			EnvironmentId: req.GetEnvironmentId(),
+			PageSize:      mcpsPageSize,
+			PageToken:     pageToken,
 		})
 		if err != nil {
 			return nil, err

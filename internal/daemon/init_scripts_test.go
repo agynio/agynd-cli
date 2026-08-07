@@ -114,7 +114,7 @@ func TestListInitScriptsOrdersByCreatedAtThenID(t *testing.T) {
 		},
 	}
 	fake := &fakeInitScriptsClient{responses: []*agentsv1.ListInitScriptsResponse{resp1, resp2}}
-	scripts, err := listInitScripts(context.Background(), fake, "agent-1")
+	scripts, err := listInitScripts(context.Background(), fake, "agent-1", "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -152,7 +152,7 @@ func TestRunInitScriptsExecutesInOrder(t *testing.T) {
 			},
 		},
 	}}}
-	if err := runInitScripts(context.Background(), fake, "agent-1", workDir); err != nil {
+	if err := runInitScripts(context.Background(), fake, "agent-1", "", workDir); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	data, err := os.ReadFile(outputPath)

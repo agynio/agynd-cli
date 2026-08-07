@@ -28,8 +28,8 @@ type initScript struct {
 	Description string
 }
 
-func runInitScripts(ctx context.Context, client initScriptsClient, agentID string, workDir string) error {
-	scripts, err := listInitScripts(ctx, client, agentID)
+func runInitScripts(ctx context.Context, client initScriptsClient, agentID string, environmentID string, workDir string) error {
+	scripts, err := listInitScripts(ctx, client, agentID, environmentID)
 	if err != nil {
 		return err
 	}
@@ -41,21 +41,45 @@ func runInitScripts(ctx context.Context, client initScriptsClient, agentID strin
 	return nil
 }
 
-func listInitScripts(ctx context.Context, client initScriptsClient, agentID string) ([]initScript, error) {
+// listInitScripts returns the environment's scripts first, then the agent's,
+// each in creation order. Names do not collide -- every script runs -- so the
+// order is the whole contract.
+func listInitScripts(ctx context.Context, client initScriptsClient, agentID string, environmentID string) ([]initScript, error) {
 	if client == nil {
 		return nil, fmt.Errorf("init scripts client is required")
 	}
 	agentID = strings.TrimSpace(agentID)
-	if agentID == "" {
-		return nil, fmt.Errorf("agent id is required")
+	environmentID = strings.TrimSpace(environmentID)
+	if agentID == "" && environmentID == "" {
+		return nil, fmt.Errorf("agent id or environment id is required")
 	}
+	var ordered []initScript
+	if environmentID != "" {
+		scripts, err := listInitScriptsForTarget(ctx, client, &agentsv1.ListInitScriptsRequest{EnvironmentId: environmentID})
+		if err != nil {
+			return nil, err
+		}
+		ordered = append(ordered, scripts...)
+	}
+	if agentID != "" {
+		scripts, err := listInitScriptsForTarget(ctx, client, &agentsv1.ListInitScriptsRequest{AgentId: agentID})
+		if err != nil {
+			return nil, err
+		}
+		ordered = append(ordered, scripts...)
+	}
+	return ordered, nil
+}
+
+func listInitScriptsForTarget(ctx context.Context, client initScriptsClient, req *agentsv1.ListInitScriptsRequest) ([]initScript, error) {
 	var scripts []initScript
 	pageToken := ""
 	for {
 		resp, err := client.ListInitScripts(ctx, &agentsv1.ListInitScriptsRequest{
-			AgentId:   agentID,
-			PageSize:  initScriptsPageSize,
-			PageToken: pageToken,
+			AgentId:       req.GetAgentId(),
+			EnvironmentId: req.GetEnvironmentId(),
+			PageSize:      initScriptsPageSize,
+			PageToken:     pageToken,
 		})
 		if err != nil {
 			return nil, err

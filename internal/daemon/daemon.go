@@ -258,7 +258,7 @@ func tryConnectPlatform(ctx context.Context, cfg config.Config) (*platformSetup,
 		return nil, config.Config{}, fmt.Errorf("list skills: %w", err)
 	}
 
-	mcpDefinitions, err := listMCPs(ctx, agentsClient, cfg.AgentID.String())
+	mcpDefinitions, err := listMCPs(ctx, agentsClient, cfg.AgentID.String(), cfg.EnvironmentID)
 	if err != nil {
 		_ = gatewayConn.Close()
 		return nil, config.Config{}, fmt.Errorf("list MCPs: %w", err)
@@ -322,7 +322,7 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 		return nil, err
 	}
 
-	if err := runInitScripts(ctx, setup.agents, cfg.AgentID.String(), cfg.WorkDir); err != nil {
+	if err := runInitScripts(ctx, setup.agents, cfg.AgentID.String(), cfg.EnvironmentID, cfg.WorkDir); err != nil {
 		tracingProxy.Close()
 		_ = setup.gatewayConn.Close()
 		return nil, err
