@@ -386,8 +386,11 @@ sandbox_mode = "danger-full-access"
 # and codex then exits before answering the initialize handshake. protocol is
 # required and binary is the OTLP default encoding.
 trace_exporter = { otlp-http = { endpoint = %q, protocol = "binary" } }
+# Prompts, tool calls and SSE events ship over logs, not traces; log_user_prompt
+# is the opt-in that stops codex reducing the prompt to prompt_length.
+exporter = { otlp-http = { endpoint = %q, protocol = "binary" } }
+log_user_prompt = true
 metrics_exporter = "none"
-exporter = "none"
 
 [model_providers.platform]
 name = "Agyn LLM"
@@ -396,5 +399,5 @@ base_url = %q
 request_max_retries = 0
 stream_max_retries = 0
 supports_websockets = false
-`, otlpEndpoint, baseURL, apiKeyEnv)
+`, otlpEndpoint+"/v1/traces", otlpEndpoint+"/v1/logs", baseURL, apiKeyEnv)
 }

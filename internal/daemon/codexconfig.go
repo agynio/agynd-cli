@@ -22,8 +22,9 @@ sandbox_mode = "danger-full-access"
 [otel]
 # See the platform template for why this is OTLP/HTTP rather than gRPC.
 trace_exporter = { otlp-http = { endpoint = %q, protocol = "binary" } }
+exporter = { otlp-http = { endpoint = %q, protocol = "binary" } }
+log_user_prompt = true
 metrics_exporter = "none"
-exporter = "none"
 `
 
 const codexConfigTemplate = `model_provider = "platform"
@@ -37,8 +38,11 @@ sandbox_mode = "danger-full-access"
 # and codex then exits before answering the initialize handshake. protocol is
 # required and binary is the OTLP default encoding.
 trace_exporter = { otlp-http = { endpoint = %q, protocol = "binary" } }
+# Prompts, tool calls and SSE events ship over logs, not traces; log_user_prompt
+# is the opt-in that stops codex reducing the prompt to prompt_length.
+exporter = { otlp-http = { endpoint = %q, protocol = "binary" } }
+log_user_prompt = true
 metrics_exporter = "none"
-exporter = "none"
 
 [model_providers.platform]
 name = "Agyn LLM"
@@ -112,7 +116,8 @@ func writeCodexConfig(cfg config.Config, otlpEndpoint string) (string, error) {
 func codexConfig(cfg config.Config, otlpEndpoint string) string {
 	payload := codexPlatformConfig(cfg.LLMBaseURL, otlpEndpoint)
 	if cfg.LLMNative {
-		payload = fmt.Sprintf(codexNativeConfigTemplate, otlpEndpoint)
+		payload = fmt.Sprintf(codexNativeConfigTemplate, otlpSignalEndpoint(otlpEndpoint, "traces"),
+			otlpSignalEndpoint(otlpEndpoint, "logs"))
 	}
 	mcpServers := cfg.MCPServers
 	if len(mcpServers) == 0 {
@@ -132,7 +137,14 @@ func codexPlatformConfig(llmBaseURL, otlpEndpoint string) string {
 	if isZitiLLMBaseURL(llmBaseURL) {
 		apiKeyEnv = ""
 	}
-	return fmt.Sprintf(codexConfigTemplate, otlpEndpoint, llmBaseURL, apiKeyEnv)
+	return fmt.Sprintf(codexConfigTemplate, otlpSignalEndpoint(otlpEndpoint, "traces"),
+		otlpSignalEndpoint(otlpEndpoint, "logs"), llmBaseURL, apiKeyEnv)
+}
+
+// Codex wants a per-signal URL, not a base, so the caller passes the collector
+// root and the signal path is appended here.
+func otlpSignalEndpoint(otlpEndpoint, signal string) string {
+	return strings.TrimSuffix(otlpEndpoint, "/") + "/v1/" + signal
 }
 
 func codexEnv(cfg config.Config, codexHome, codexHomeValue, otlpEndpoint string) map[string]string {
