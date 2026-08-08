@@ -258,13 +258,12 @@ func tryConnectPlatform(ctx context.Context, cfg config.Config) (*platformSetup,
 		return nil, config.Config{}, fmt.Errorf("list skills: %w", err)
 	}
 
-	mcpDefinitions, err := listMCPs(ctx, agentsClient, cfg.AgentID.String(), cfg.EnvironmentID)
-	if err != nil {
-		_ = gatewayConn.Close()
-		return nil, config.Config{}, fmt.Errorf("list MCPs: %w", err)
-	}
-
-	resolvedMCPs, err := resolveMCPServers(mcpDefinitions, cfg.MCPServers, cfg.MCPPort)
+	// The Orchestrator assembles the sidecars, so it is what knows which MCPs a
+	// workload has -- an agent's and its environment's alike -- and hands them
+	// over as AGENT_MCP_SERVERS. Asking the Agents service again would re-derive
+	// that list from the same source, and agynd holds no relation to the
+	// environment that would let it.
+	resolvedMCPs, err := resolveMCPServers(mcpDefinitionsFromServers(cfg.MCPServers), cfg.MCPServers, cfg.MCPPort)
 	if err != nil {
 		_ = gatewayConn.Close()
 		return nil, config.Config{}, err
