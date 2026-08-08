@@ -154,6 +154,11 @@ func New(ctx context.Context, cfg config.Config, version string) (*Daemon, error
 	if cfg.Mode == config.ModeHolder {
 		return newHolderDaemon(cfg), nil
 	}
+	// Before any SDK is constructed: the CLI reads it at startup, and a shell
+	// exec'd into an agent workload finds it for the same reason holder does.
+	if err := writePlaceholderFile(); err != nil {
+		return nil, fmt.Errorf("write placeholder credential: %w", err)
+	}
 	switch cfg.SDK {
 	case SDKCodex:
 		return newCodexDaemon(ctx, cfg, version)
