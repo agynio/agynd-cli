@@ -1,132 +1,18 @@
 package daemon
 
 import (
-	"context"
 	"fmt"
-	"sort"
-	"strings"
 	"time"
 
-	agentsv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/agents/v1"
 	"github.com/agynio/agynd-cli/internal/config"
-	"google.golang.org/grpc"
 )
 
 const mcpsPageSize int32 = 100
-
-type mcpsClient interface {
-	ListMcps(ctx context.Context, in *agentsv1.ListMcpsRequest, opts ...grpc.CallOption) (*agentsv1.ListMcpsResponse, error)
-}
 
 type mcpDefinition struct {
 	ID        string
 	Name      string
 	CreatedAt time.Time
-}
-
-// listMCPs merges the environment's servers with the agent's. Both run in an
-// agent workload; a sandbox has no agent and gets the environment's alone. On a
-// name collision the agent-level server wins, the rule ENV follows.
-func listMCPs(ctx context.Context, client mcpsClient, agentID string, environmentID string) ([]mcpDefinition, error) {
-	if client == nil {
-		return nil, fmt.Errorf("mcps client is required")
-	}
-	agentID = strings.TrimSpace(agentID)
-	environmentID = strings.TrimSpace(environmentID)
-	if agentID == "" && environmentID == "" {
-		return nil, fmt.Errorf("agent id or environment id is required")
-	}
-	byName := map[string]mcpDefinition{}
-	if environmentID != "" {
-		environmentMCPs, err := listMCPsForTarget(ctx, client, &agentsv1.ListMcpsRequest{EnvironmentId: environmentID})
-		if err != nil {
-			return nil, err
-		}
-		for _, mcp := range environmentMCPs {
-			byName[mcp.Name] = mcp
-		}
-	}
-	if agentID != "" {
-		agentMCPs, err := listMCPsForTarget(ctx, client, &agentsv1.ListMcpsRequest{AgentId: agentID})
-		if err != nil {
-			return nil, err
-		}
-		for _, mcp := range agentMCPs {
-			byName[mcp.Name] = mcp
-		}
-	}
-	mcps := make([]mcpDefinition, 0, len(byName))
-	for _, mcp := range byName {
-		mcps = append(mcps, mcp)
-	}
-	sort.Slice(mcps, func(i, j int) bool {
-		if mcps[i].CreatedAt.Equal(mcps[j].CreatedAt) {
-			return mcps[i].ID < mcps[j].ID
-		}
-		return mcps[i].CreatedAt.Before(mcps[j].CreatedAt)
-	})
-	return mcps, nil
-}
-
-func listMCPsForTarget(ctx context.Context, client mcpsClient, req *agentsv1.ListMcpsRequest) ([]mcpDefinition, error) {
-	var mcps []mcpDefinition
-	pageToken := ""
-	for {
-		resp, err := client.ListMcps(ctx, &agentsv1.ListMcpsRequest{
-			AgentId:       req.GetAgentId(),
-			EnvironmentId: req.GetEnvironmentId(),
-			PageSize:      mcpsPageSize,
-			PageToken:     pageToken,
-		})
-		if err != nil {
-			return nil, err
-		}
-		for _, entry := range resp.GetMcps() {
-			parsed, err := mcpFromProto(entry)
-			if err != nil {
-				return nil, err
-			}
-			mcps = append(mcps, parsed)
-		}
-		pageToken = strings.TrimSpace(resp.GetNextPageToken())
-		if pageToken == "" {
-			break
-		}
-	}
-	sort.Slice(mcps, func(i, j int) bool {
-		if mcps[i].CreatedAt.Equal(mcps[j].CreatedAt) {
-			return mcps[i].ID < mcps[j].ID
-		}
-		return mcps[i].CreatedAt.Before(mcps[j].CreatedAt)
-	})
-	return mcps, nil
-}
-
-func mcpFromProto(entry *agentsv1.Mcp) (mcpDefinition, error) {
-	if entry == nil {
-		return mcpDefinition{}, fmt.Errorf("mcp is required")
-	}
-	meta := entry.GetMeta()
-	if meta == nil {
-		return mcpDefinition{}, fmt.Errorf("mcp meta is required")
-	}
-	id := strings.TrimSpace(meta.GetId())
-	if id == "" {
-		return mcpDefinition{}, fmt.Errorf("mcp id is required")
-	}
-	createdAt := meta.GetCreatedAt()
-	if createdAt == nil {
-		return mcpDefinition{}, fmt.Errorf("mcp created at is required")
-	}
-	name := strings.TrimSpace(entry.GetName())
-	if name == "" {
-		return mcpDefinition{}, fmt.Errorf("mcp name is required")
-	}
-	return mcpDefinition{
-		ID:        id,
-		Name:      name,
-		CreatedAt: createdAt.AsTime(),
-	}, nil
 }
 
 func resolveMCPServers(definitions []mcpDefinition, envServers []config.MCPServer, fallbackPort *int) ([]config.MCPServer, error) {
@@ -176,4 +62,14 @@ func resolveMCPServers(definitions []mcpDefinition, envServers []config.MCPServe
 		}
 	}
 	return resolved, nil
+}
+
+// mcpDefinitionsFromServers names what the Orchestrator injected. The ports it
+// carries are authoritative; the names are all resolveMCPServers needs.
+func mcpDefinitionsFromServers(servers []config.MCPServer) []mcpDefinition {
+	definitions := make([]mcpDefinition, 0, len(servers))
+	for _, server := range servers {
+		definitions = append(definitions, mcpDefinition{Name: server.Name})
+	}
+	return definitions
 }
