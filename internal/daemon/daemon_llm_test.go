@@ -26,9 +26,9 @@ func TestZitiLLMServiceAddress(t *testing.T) {
 		addr string
 		ok   bool
 	}{
-		{name: "default http", url: "http://llm-proxy.ziti/v1", addr: "llm-proxy.ziti:80", ok: true},
-		{name: "default https", url: "https://llm-proxy.ziti/v1", addr: "llm-proxy.ziti:443", ok: true},
-		{name: "explicit port", url: "http://llm-proxy.ziti:8080/v1", addr: "llm-proxy.ziti:8080", ok: true},
+		{name: "default http", url: "http://llm-proxy.agyn/v1", addr: "llm-proxy.agyn:80", ok: true},
+		{name: "default https", url: "https://llm-proxy.agyn/v1", addr: "llm-proxy.agyn:443", ok: true},
+		{name: "explicit port", url: "http://llm-proxy.agyn:8080/v1", addr: "llm-proxy.agyn:8080", ok: true},
 		{name: "public", url: "https://llm.example/v1", ok: false},
 	}
 
@@ -49,7 +49,7 @@ func TestZitiLLMServiceAddress(t *testing.T) {
 }
 
 func TestZitiLLMServiceAddressRejectsMissingDefaultPort(t *testing.T) {
-	_, _, err := zitiLLMServiceAddress("tcp://llm-proxy.ziti/v1")
+	_, _, err := zitiLLMServiceAddress("tcp://llm-proxy.agyn/v1")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}

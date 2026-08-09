@@ -138,28 +138,28 @@ func TestClaudeBaseURL(t *testing.T) {
 	}{
 		{
 			name:  "strip-v1",
-			input: "http://llm-proxy.ziti:443/v1",
-			want:  "http://llm-proxy.ziti:443",
+			input: "http://llm-proxy.agyn:443/v1",
+			want:  "http://llm-proxy.agyn:443",
 		},
 		{
 			name:  "strip-v1-trailing-slash",
-			input: "http://llm-proxy.ziti:443/v1/",
-			want:  "http://llm-proxy.ziti:443",
+			input: "http://llm-proxy.agyn:443/v1/",
+			want:  "http://llm-proxy.agyn:443",
 		},
 		{
 			name:  "no-strip",
-			input: "http://llm-proxy.ziti:443/v1beta",
-			want:  "http://llm-proxy.ziti:443/v1beta",
+			input: "http://llm-proxy.agyn:443/v1beta",
+			want:  "http://llm-proxy.agyn:443/v1beta",
 		},
 		{
 			name:  "already-base",
-			input: "http://llm-proxy.ziti:443",
-			want:  "http://llm-proxy.ziti:443",
+			input: "http://llm-proxy.agyn:443",
+			want:  "http://llm-proxy.agyn:443",
 		},
 		{
 			name:  "trim-space",
-			input: " http://llm-proxy.ziti:443/v1 ",
-			want:  "http://llm-proxy.ziti:443",
+			input: " http://llm-proxy.agyn:443/v1 ",
+			want:  "http://llm-proxy.agyn:443",
 		},
 	}
 
@@ -212,7 +212,7 @@ func TestWriteClaudeSettingsAcceptsTheBypassDisclaimer(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	if err := writeClaudeSettings("http://llm-proxy.ziti:443", "platform", nil, false); err != nil {
+	if err := writeClaudeSettings("http://llm-proxy.agyn:443", "platform", nil, false); err != nil {
 		t.Fatalf("write settings: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))

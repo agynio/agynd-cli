@@ -166,7 +166,7 @@ func TestFromEnvGatewayDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if cfg.GatewayAddress != "gateway.ziti:443" {
+	if cfg.GatewayAddress != "gateway.agyn:443" {
 		t.Fatalf("expected default gateway address, got %s", cfg.GatewayAddress)
 	}
 }
@@ -180,7 +180,7 @@ func TestFromEnvTracingAddressDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if cfg.TracingAddress != "tracing.ziti:443" {
+	if cfg.TracingAddress != "tracing.agyn:443" {
 		t.Fatalf("expected default tracing address, got %s", cfg.TracingAddress)
 	}
 }
@@ -322,7 +322,7 @@ func TestFromEnvLLMBaseURLDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if cfg.LLMBaseURL != "http://llm-proxy.ziti:443/v1" {
+	if cfg.LLMBaseURL != "http://llm-proxy.agyn:443/v1" {
 		t.Fatalf("expected default LLM base URL, got %s", cfg.LLMBaseURL)
 	}
 }
@@ -551,7 +551,7 @@ func TestFromEnvInvalidMode(t *testing.T) {
 func TestFromEnvHolderModeReadsAgentCLIAndLLMConfig(t *testing.T) {
 	configPath := writeAgentConfig(t, "claude", "bin/claude")
 	t.Setenv("AGYND_MODE", ModeHolder)
-	t.Setenv("LLM_BASE_URL", "http://llm-proxy.ziti:443/v1")
+	t.Setenv("LLM_BASE_URL", "http://llm-proxy.agyn:443/v1")
 	t.Setenv("LLM_MODE", "native")
 	t.Setenv("AGENT_MCP_SERVERS", "files:9100")
 
@@ -562,7 +562,7 @@ func TestFromEnvHolderModeReadsAgentCLIAndLLMConfig(t *testing.T) {
 	if cfg.SDK != "claude" {
 		t.Fatalf("expected claude sdk, got %q", cfg.SDK)
 	}
-	if cfg.LLMBaseURL != "http://llm-proxy.ziti:443/v1" {
+	if cfg.LLMBaseURL != "http://llm-proxy.agyn:443/v1" {
 		t.Fatalf("unexpected llm base url: %q", cfg.LLMBaseURL)
 	}
 	if !cfg.LLMNative {
