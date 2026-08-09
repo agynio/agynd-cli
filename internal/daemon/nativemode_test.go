@@ -87,7 +87,9 @@ func TestCodexConfigNativeOmitsProvider(t *testing.T) {
 			t.Fatalf("native codex config carries %q:\n%s", forbidden, payload)
 		}
 	}
-	for _, required := range []string{"[mcp_servers.platform]", "approval_policy", "[[hooks.Stop]]"} {
+	// The hook lives in the system config, not this one -- it is the only layer
+	// codex trusts a hook from.
+	for _, required := range []string{"[mcp_servers.platform]", "approval_policy"} {
 		if !strings.Contains(payload, required) {
 			t.Fatalf("native codex config lost %q:\n%s", required, payload)
 		}

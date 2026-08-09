@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agynio/agynd-cli/internal/transcript"
+
 	collectortracev1 "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	commonv1 "go.opentelemetry.io/proto/otlp/common/v1"
 	tracev1 "go.opentelemetry.io/proto/otlp/trace/v1"
@@ -87,16 +89,35 @@ func TestInvocationMessageCarriesTheMessageAndItsAttribution(t *testing.T) {
 	if attr(span.Attributes, "agyn.message.text") != "hello" {
 		t.Fatal("expected the message body on the span")
 	}
-	// The message is the one attribution a producer asserts; the thread is
-	// resolved from it and the identity settles the rest.
+	// The message and its thread are both asserted: Tracing authorizes the one
+	// against the other before storing it, and rejects a message named without
+	// a thread.
 	if got := attr(resource, messageIDAttributeKey); got != "message-1" {
 		t.Fatalf("expected the message id as a resource attribute, got %q", got)
 	}
 	if got := attr(resource, workloadIDAttributeKey); got != "workload-1" {
 		t.Fatalf("expected the workload id as a resource attribute, got %q", got)
 	}
-	if attr(resource, "agyn.thread.id") != "" {
-		t.Fatal("expected no thread attribution: an instance serves an inbox drawn from many threads")
+	if got := attr(resource, threadIDAttributeKey); got != "thread-1" {
+		t.Fatalf("expected the thread id alongside the message, got %q", got)
+	}
+}
+
+// A turn read from a transcript names the message the agent CLI was handed, not
+// one this process was told about, so the hook's spans assert neither.
+func TestTurnsAssertNoMessageOrThread(t *testing.T) {
+	exporter, service := startExporter(t, "workload-1")
+
+	if err := exporter.Turns(context.Background(), []transcript.Turn{sampleTurn()}); err != nil {
+		t.Fatalf("expected the turn to export, got %v", err)
+	}
+
+	resource := service.requests[0].ResourceSpans[0].Resource.GetAttributes()
+	if attr(resource, messageIDAttributeKey) != "" || attr(resource, threadIDAttributeKey) != "" {
+		t.Fatal("expected the hook to assert only its workload")
+	}
+	if got := attr(resource, workloadIDAttributeKey); got != "workload-1" {
+		t.Fatalf("expected the workload id, got %q", got)
 	}
 }
 

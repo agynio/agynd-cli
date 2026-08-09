@@ -28,6 +28,7 @@ const (
 
 	spanInvocationMessage = "invocation.message"
 
+	threadIDAttributeKey   = "agyn.thread.id"
 	messageIDAttributeKey  = "agyn.thread.message.id"
 	workloadIDAttributeKey = "agyn.workload.id"
 )
@@ -122,11 +123,15 @@ func (e *Exporter) InvocationMessage(ctx context.Context, message Message) error
 	return err
 }
 
-// The message is the one attribution a producer asserts. The thread it belongs
-// to is resolved from it, and the identity the connection carries settles the
-// rest.
+// The message and the thread it came from are both asserted. Tracing authorizes
+// the message against its thread before storing it, so a message named without
+// one is rejected rather than stored unverified. A workload is not thread-scoped
+// -- but the item that opened a turn is, and this is the producer that knows it.
 func (e *Exporter) resourceAttributes(message Message) []*commonv1.KeyValue {
 	attrs := []*commonv1.KeyValue{stringAttr(messageIDAttributeKey, message.ID)}
+	if message.ThreadID != "" {
+		attrs = append(attrs, stringAttr(threadIDAttributeKey, message.ThreadID))
+	}
 	if e.workloadID != "" {
 		attrs = append(attrs, stringAttr(workloadIDAttributeKey, e.workloadID))
 	}

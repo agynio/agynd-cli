@@ -397,5 +397,53 @@ base_url = %q
 request_max_retries = 0
 stream_max_retries = 0
 supports_websockets = false
-`+codexHookTemplate, baseURL, apiKeyEnv)
+`, baseURL, apiKeyEnv)
+}
+
+// Codex registers a hook only when it is managed or carries a matching trust
+// hash. The system layer is the managed one, so a hook written anywhere else is
+// discovered, found untrusted and dropped in silence.
+func TestWriteCodexConfigRegistersTheHookWhereCodexTrustsIt(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	systemConfig := filepath.Join(t.TempDir(), "etc", "codex", "config.toml")
+	original := codexSystemConfigPath
+	codexSystemConfigPath = systemConfig
+	t.Cleanup(func() { codexSystemConfigPath = original })
+
+	if _, err := writeCodexConfig(config.Config{LLMBaseURL: "https://example.com"}); err != nil {
+		t.Fatalf("expected config to be written, got %v", err)
+	}
+
+	content, err := os.ReadFile(systemConfig)
+	if err != nil {
+		t.Fatalf("expected the system config to be readable, got %v", err)
+	}
+	if string(content) != codexHookTemplate {
+		t.Fatalf("expected the hook in the system config, got %q", string(content))
+	}
+	// The user config is not a layer codex trusts hooks from, so declaring it
+	// there as well would be a second untrusted copy rather than a fallback.
+	userConfig, err := os.ReadFile(filepath.Join(tmpHome, ".codex", "config.toml"))
+	if err != nil {
+		t.Fatalf("expected the user config to be readable, got %v", err)
+	}
+	if strings.Contains(string(userConfig), "hooks.Stop") {
+		t.Fatal("expected no hook in the user config")
+	}
+}
+
+// Tracing is optional: an agent whose hook cannot be registered still answers.
+func TestWriteCodexConfigSurvivesAnUnwritableSystemConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	original := codexSystemConfigPath
+	codexSystemConfigPath = filepath.Join(t.TempDir(), "file", "config.toml")
+	if err := os.WriteFile(filepath.Dir(filepath.Dir(codexSystemConfigPath))+"/file", nil, 0o600); err != nil {
+		t.Fatalf("seed an unwritable path: %v", err)
+	}
+	t.Cleanup(func() { codexSystemConfigPath = original })
+
+	if _, err := writeCodexConfig(config.Config{LLMBaseURL: "https://example.com"}); err != nil {
+		t.Fatalf("expected the config to be written anyway, got %v", err)
+	}
 }

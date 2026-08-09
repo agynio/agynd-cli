@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -20,7 +21,7 @@ import (
 // vendor. Tracing and the mcp_servers appended below are unaffected.
 const codexNativeConfigTemplate = `approval_policy = "never"
 sandbox_mode = "danger-full-access"
-` + codexHookTemplate
+`
 
 // traceHookCommand is the platform's trace hook, delivered to /agyn/bin beside
 // agynd and reached by name because that directory is on the agent's PATH.
@@ -38,12 +39,22 @@ const (
 // codexHookTemplate runs the platform's trace hook when a turn completes.
 // Codex hands it the rollout path, which is the record of what the turn
 // actually did -- its telemetry reports only that a call happened.
-const codexHookTemplate = `
-[[hooks.Stop]]
+//
+// It is written to the system config rather than the user one. Codex registers
+// a hook only when it is managed or carries a trust hash matching its contents,
+// and a hook declared in the user config is neither: it is discovered, found
+// untrusted, and dropped without a word. Only the system layer is managed, and
+// the flag that would bypass the check is a CLI argument the app-server
+// subcommand does not accept.
+const codexHookTemplate = `[[hooks.Stop]]
 [[hooks.Stop.hooks]]
 type = "command"
 command = "` + traceHookCommand + `"
 `
+
+// The system config layer, which is what makes a hook declared in it managed.
+// A variable so a test can write somewhere it is allowed to.
+var codexSystemConfigPath = "/etc/codex/config.toml"
 
 const codexConfigTemplate = `model_provider = "platform"
 approval_policy = "never"
@@ -56,7 +67,7 @@ base_url = %q
 request_max_retries = 0
 stream_max_retries = 0
 supports_websockets = false
-` + codexHookTemplate
+`
 
 const codexAPIKeyEnv = `env_key = "OPENAI_API_KEY"
 `
@@ -114,7 +125,22 @@ func writeCodexConfig(cfg config.Config) (string, error) {
 	if err := os.WriteFile(configPath, []byte(payload), 0o600); err != nil {
 		return "", fmt.Errorf("write codex config: %w", err)
 	}
+	if err := writeCodexSystemConfig(); err != nil {
+		// Tracing is optional: an agent that cannot be traced still answers.
+		log.Printf("tracing: register trace hook: %v", err)
+	}
 	return codexHome, nil
+}
+
+// writeCodexSystemConfig declares the trace hook where codex will trust it.
+func writeCodexSystemConfig() error {
+	if err := os.MkdirAll(filepath.Dir(codexSystemConfigPath), 0o755); err != nil {
+		return fmt.Errorf("create codex system config dir: %w", err)
+	}
+	if err := os.WriteFile(codexSystemConfigPath, []byte(codexHookTemplate), 0o644); err != nil {
+		return fmt.Errorf("write codex system config: %w", err)
+	}
+	return nil
 }
 
 func codexPlatformConfig(llmBaseURL string) string {
