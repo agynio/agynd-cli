@@ -2,6 +2,7 @@ package tracingproxy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -33,6 +34,10 @@ const (
 	workloadIDAttributeKey = "agyn.workload.id"
 	maxHTTPExportBytes     = 32 << 20
 	maxLoggedValueBytes    = 400
+
+	// TurnsPath is where a tracing plugin posts the turns it read from the
+	// agent CLI's session transcript.
+	TurnsPath = "/agyn/v1/turns"
 )
 
 type Config struct {
@@ -115,6 +120,7 @@ func Start(ctx context.Context, cfg Config) (*Proxy, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/traces", proxy.serveHTTPTraces)
 	mux.HandleFunc("POST /v1/logs", proxy.serveHTTPLogs)
+	mux.HandleFunc("POST "+TurnsPath, proxy.serveHTTPTurns)
 	proxy.httpServer = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if err := proxy.httpServer.Serve(httpListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -199,6 +205,55 @@ func (p *Proxy) serveHTTPLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/x-protobuf")
 	_, _ = w.Write(encoded)
+}
+
+// serveHTTPTurns receives what a tracing plugin read from the agent CLI's
+// session transcript. Its own path rather than an OTLP one: a plugin posts
+// turns, not spans, and knowing how this platform models a trace is exactly
+// what it is spared.
+func (p *Proxy) serveHTTPTurns(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxHTTPExportBytes))
+	if err != nil {
+		http.Error(w, "read body", http.StatusBadRequest)
+		return
+	}
+	var request struct {
+		Turns []Turn `json:"turns"`
+	}
+	if err := json.Unmarshal(body, &request); err != nil {
+		http.Error(w, "decode turns", http.StatusBadRequest)
+		return
+	}
+
+	var spans []*tracev1.Span
+	for _, turn := range request.Turns {
+		turnSpans, err := p.spansFromTurn(turn)
+		if err != nil {
+			// One malformed turn does not discard the batch: a plugin reads a
+			// transcript it did not write, and the turns around it are intact.
+			log.Printf("tracing proxy: skip turn: %v", err)
+			continue
+		}
+		spans = append(spans, turnSpans...)
+	}
+	if len(spans) > 0 {
+		export := &collectortracev1.ExportTraceServiceRequest{
+			ResourceSpans: []*tracev1.ResourceSpans{{
+				ScopeSpans: []*tracev1.ScopeSpans{{
+					Scope: &commonv1.InstrumentationScope{Name: turnScopeName},
+					Spans: spans,
+				}},
+			}},
+		}
+		if _, err := p.Export(r.Context(), export); err != nil {
+			// The plugin is told, so it can leave the turn unrecorded and send
+			// it again rather than marking it delivered.
+			log.Printf("tracing proxy: export turn spans: %v", err)
+			http.Error(w, "export turns", http.StatusBadGateway)
+			return
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // logUntranslatedRecord reports an event no span was built from, so a codex
