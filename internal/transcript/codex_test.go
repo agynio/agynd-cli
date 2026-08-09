@@ -187,3 +187,27 @@ func TestCodexCarriesTheConversationAsContext(t *testing.T) {
 		t.Fatalf("expected the tool output in the context, got %#v", second[2])
 	}
 }
+
+// The system prompt is the first thing the model was shown, and codex records
+// it once on the line that opens the session rather than per turn.
+func TestCodexCarriesTheSystemPrompt(t *testing.T) {
+	turns, err := Parse(FormatCodex, []byte(strings.Join([]string{
+		`{"timestamp":"2026-08-09T05:00:00Z","type":"session_meta","payload":{"id":"session-1","base_instructions":{"text":"You are Codex."}}}`,
+		`{"timestamp":"2026-08-09T05:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}}`,
+		`{"timestamp":"2026-08-09T05:00:02Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}]}}`,
+	}, "\n")))
+	if err != nil {
+		t.Fatalf("expected the rollout to parse, got %v", err)
+	}
+
+	context := turns[0].Steps[0].Context
+	if len(context) != 2 {
+		t.Fatalf("expected the system prompt and the prompt, got %d items", len(context))
+	}
+	if context[0].Role != "system" || context[0].Text != "You are Codex." {
+		t.Fatalf("expected the system prompt first, got %#v", context[0])
+	}
+	if context[1].Role != "user" {
+		t.Fatalf("expected the prompt after it, got %#v", context[1])
+	}
+}
