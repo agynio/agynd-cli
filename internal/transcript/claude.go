@@ -54,6 +54,7 @@ func parseClaude(data []byte) ([]Turn, error) {
 	// A tool's output arrives on a later line than the call, so calls are held
 	// by id until it does.
 	pending := map[string]*ToolCall{}
+	seen := &history{}
 
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	scanner.Buffer(make([]byte, 0, 64*1024), maxTranscriptLine)
@@ -68,15 +69,16 @@ func parseClaude(data []byte) ([]Turn, error) {
 		switch line.Type {
 		case "user":
 			if text, ok := claudeText(line.Message.Content); ok {
+				seen.add(ContextItem{Role: "user", Text: text, At: line.Timestamp})
 				current = closeAndOpen(&turns, current, line, text)
 				continue
 			}
-			applyToolResults(line, pending)
+			applyToolResults(line, pending, seen)
 		case "assistant":
 			if current == nil {
 				continue
 			}
-			appendAssistant(current, line, pending)
+			appendAssistant(current, line, pending, seen)
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -104,12 +106,12 @@ func closeAndOpen(turns *[]Turn, current *Turn, line claudeLine, text string) *T
 // Claude streams one response as several lines sharing a message id. They are
 // one model step, so the text is joined and the usage taken at its highest
 // rather than counted once per line.
-func appendAssistant(turn *Turn, line claudeLine, pending map[string]*ToolCall) {
+func appendAssistant(turn *Turn, line claudeLine, pending map[string]*ToolCall, seen *history) {
 	stepID := line.Message.ID
 	if stepID == "" {
 		stepID = line.RequestID
 	}
-	step := stepByID(turn, stepID, line)
+	step := stepByID(turn, stepID, line, seen)
 
 	var blocks []claudeBlock
 	if err := json.Unmarshal(line.Message.Content, &blocks); err != nil {
@@ -120,8 +122,10 @@ func appendAssistant(turn *Turn, line claudeLine, pending map[string]*ToolCall) 
 		case "text":
 			step.Text = joinText(step.Text, block.Text)
 			turn.FinalOutput = joinText(turn.FinalOutput, block.Text)
+			seen.add(ContextItem{Role: "assistant", Text: block.Text, At: line.Timestamp})
 		case "thinking":
 			step.Reasoning = joinText(step.Reasoning, block.Text)
+			seen.add(ContextItem{Role: "assistant", Text: block.Text, At: line.Timestamp})
 		case "tool_use":
 			call := ToolCall{
 				CallID:    block.ID,
@@ -131,6 +135,7 @@ func appendAssistant(turn *Turn, line claudeLine, pending map[string]*ToolCall) 
 			}
 			step.ToolCalls = append(step.ToolCalls, call)
 			pending[block.ID] = &step.ToolCalls[len(step.ToolCalls)-1]
+			seen.add(ContextItem{Role: "assistant", Text: block.Name, JSON: call.Arguments, At: line.Timestamp})
 		}
 	}
 	step.EndedAt = line.Timestamp
@@ -142,7 +147,7 @@ func appendAssistant(turn *Turn, line claudeLine, pending map[string]*ToolCall) 
 	}
 }
 
-func stepByID(turn *Turn, id string, line claudeLine) *Step {
+func stepByID(turn *Turn, id string, line claudeLine, seen *history) *Step {
 	for i := range turn.Steps {
 		if turn.Steps[i].ID == id {
 			return &turn.Steps[i]
@@ -153,11 +158,14 @@ func stepByID(turn *Turn, id string, line claudeLine) *Step {
 		StartedAt: line.Timestamp,
 		EndedAt:   line.Timestamp,
 		Model:     line.Message.Model,
+		// Taken when the step opens: what the model was shown is what stood
+		// before it answered.
+		Context: seen.snapshot(),
 	})
 	return &turn.Steps[len(turn.Steps)-1]
 }
 
-func applyToolResults(line claudeLine, pending map[string]*ToolCall) {
+func applyToolResults(line claudeLine, pending map[string]*ToolCall, seen *history) {
 	var blocks []claudeBlock
 	if err := json.Unmarshal(line.Message.Content, &blocks); err != nil {
 		return
@@ -175,6 +183,7 @@ func applyToolResults(line claudeLine, pending map[string]*ToolCall) {
 		if block.IsError {
 			call.Error = textOf(rawValue(block.Content))
 		}
+		seen.add(ContextItem{Role: "tool", JSON: call.Output, At: line.Timestamp})
 		delete(pending, block.ToolUseID)
 	}
 }
