@@ -545,3 +545,54 @@ func TestFromEnvInvalidMode(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+// A sandbox prepares the CLI it will not spawn, so holder mode reads what that
+// preparation needs -- including which CLI it is.
+func TestFromEnvHolderModeReadsAgentCLIAndLLMConfig(t *testing.T) {
+	configPath := writeAgentConfig(t, "claude", "bin/claude")
+	t.Setenv("AGYND_MODE", ModeHolder)
+	t.Setenv("LLM_BASE_URL", "http://llm-proxy.ziti:443/v1")
+	t.Setenv("LLM_MODE", "native")
+	t.Setenv("AGENT_MCP_SERVERS", "files:9100")
+
+	cfg, err := fromEnv(configPath)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.SDK != "claude" {
+		t.Fatalf("expected claude sdk, got %q", cfg.SDK)
+	}
+	if cfg.LLMBaseURL != "http://llm-proxy.ziti:443/v1" {
+		t.Fatalf("unexpected llm base url: %q", cfg.LLMBaseURL)
+	}
+	if !cfg.LLMNative {
+		t.Fatal("expected native mode")
+	}
+	if len(cfg.MCPServers) != 1 || cfg.MCPServers[0].Name != "files" {
+		t.Fatalf("unexpected mcp servers: %v", cfg.MCPServers)
+	}
+}
+
+// A workspace-only environment carries no CLI, and that is not a failure.
+func TestFromEnvHolderModeWithoutAgentConfig(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "missing-config.json")
+	t.Setenv("AGYND_MODE", ModeHolder)
+
+	cfg, err := fromEnv(configPath)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.SDK != ModeHolder {
+		t.Fatalf("expected holder sdk marker, got %q", cfg.SDK)
+	}
+}
+
+func TestFromEnvHolderModeRejectsMalformedMCPServers(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "missing-config.json")
+	t.Setenv("AGYND_MODE", ModeHolder)
+	t.Setenv("AGENT_MCP_SERVERS", "files")
+
+	if _, err := fromEnv(configPath); err == nil {
+		t.Fatal("expected error for malformed AGENT_MCP_SERVERS")
+	}
+}

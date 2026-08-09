@@ -52,6 +52,8 @@ func TestWriteClaudeSettings(t *testing.T) {
 			},
 			Deny: []string{},
 		},
+		SkipDangerousModePermissionPrompt: true,
+		Theme:                             "dark",
 		Env: map[string]string{
 			"ANTHROPIC_BASE_URL":                       baseURL,
 			"ANTHROPIC_API_KEY":                        apiKey,
@@ -110,6 +112,8 @@ func TestWriteClaudeSettingsWithMCPServers(t *testing.T) {
 			},
 			Deny: []string{},
 		},
+		SkipDangerousModePermissionPrompt: true,
+		Theme:                             "dark",
 		Env: map[string]string{
 			"ANTHROPIC_BASE_URL":                       baseURL,
 			"ANTHROPIC_API_KEY":                        apiKey,
@@ -199,5 +203,30 @@ func TestWriteClaudeSettingsRegistersTheTraceHook(t *testing.T) {
 		if hook.Type != "command" || hook.Command != traceHookCommand {
 			t.Fatalf("unexpected %s hook: %#v", event, hook)
 		}
+	}
+}
+
+// Without the disclaimer accepted the CLI downgrades bypassPermissions to the
+// default mode, so the permissions block alone does not survive contact.
+func TestWriteClaudeSettingsAcceptsTheBypassDisclaimer(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	if err := writeClaudeSettings("http://llm-proxy.ziti:443", "platform", nil, false); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	var settings claudeSettings
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("parse settings: %v", err)
+	}
+	if !settings.SkipDangerousModePermissionPrompt {
+		t.Fatal("bypass disclaimer not accepted")
+	}
+	if settings.Theme == "" {
+		t.Fatal("theme not set")
 	}
 }

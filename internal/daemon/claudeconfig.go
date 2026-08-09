@@ -11,10 +11,14 @@ import (
 )
 
 type claudeSettings struct {
-	Permissions claudePermissions          `json:"permissions"`
-	Env         map[string]string          `json:"env"`
-	MCPServers  map[string]claudeMCPServer `json:"mcpServers,omitempty"`
-	Hooks       map[string][]claudeMatcher `json:"hooks,omitempty"`
+	Permissions claudePermissions `json:"permissions"`
+	// Without this the CLI downgrades bypassPermissions to the default mode and
+	// waits on its disclaimer, which no agent workload can answer.
+	SkipDangerousModePermissionPrompt bool                       `json:"skipDangerousModePermissionPrompt"`
+	Theme                             string                     `json:"theme"`
+	Env                               map[string]string          `json:"env"`
+	MCPServers                        map[string]claudeMCPServer `json:"mcpServers,omitempty"`
+	Hooks                             map[string][]claudeMatcher `json:"hooks,omitempty"`
 }
 
 type claudeMatcher struct {
@@ -87,6 +91,8 @@ func writeClaudeSettings(llmBaseURL, apiKey string, mcpServers []config.MCPServe
 			},
 			Deny: []string{},
 		},
+		SkipDangerousModePermissionPrompt: true,
+		Theme:                             "dark",
 		// Neither of these is endpoint or credential configuration, and both
 		// matter more in native mode than in platform mode: only the vendor's
 		// API host is intercepted, so any other call the CLI makes on its own
