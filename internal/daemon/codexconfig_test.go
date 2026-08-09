@@ -93,7 +93,7 @@ func TestWriteCodexConfigForZitiOmitsAPIKeyEnv(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 
-	baseURL := "http://llm-proxy.ziti:443/v1"
+	baseURL := "http://llm-proxy.agyn:443/v1"
 	codexHome, err := writeCodexConfig(config.Config{LLMBaseURL: baseURL, MCPServers: nil})
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
@@ -167,10 +167,10 @@ func TestCodexEnvIncludesAPIKeyForPublicLLM(t *testing.T) {
 
 func TestCodexEnvOmitsAPIKeyForZitiLLM(t *testing.T) {
 	t.Setenv("PATH", "/usr/bin")
-	t.Setenv(codexEnvNoProxy, "localhost, llm-proxy.ziti")
+	t.Setenv(codexEnvNoProxy, "localhost, llm-proxy.agyn")
 	t.Setenv(codexEnvNoProxyLower, "127.0.0.1")
 	cfg := config.Config{
-		LLMBaseURL:  "http://llm-proxy.ziti:443/v1",
+		LLMBaseURL:  "http://llm-proxy.agyn:443/v1",
 		LLMAPIToken: "user-token",
 	}
 
@@ -179,7 +179,7 @@ func TestCodexEnvOmitsAPIKeyForZitiLLM(t *testing.T) {
 	if _, ok := env[codexEnvOpenAIAPIKey]; ok {
 		t.Fatalf("expected ziti codex env to omit %s", codexEnvOpenAIAPIKey)
 	}
-	if env[codexEnvNoProxy] != "localhost,llm-proxy.ziti,127.0.0.1,.ziti,gateway.ziti,tracing.ziti" {
+	if env[codexEnvNoProxy] != "localhost,llm-proxy.agyn,127.0.0.1,.agyn,gateway.agyn,tracing.agyn" {
 		t.Fatalf("unexpected %s: %q", codexEnvNoProxy, env[codexEnvNoProxy])
 	}
 	if env[codexEnvNoProxyLower] != env[codexEnvNoProxy] {
@@ -190,13 +190,13 @@ func TestCodexEnvOmitsAPIKeyForZitiLLM(t *testing.T) {
 
 func TestCodexEnvMergesNoProxySpellingsForZitiLLM(t *testing.T) {
 	t.Setenv("PATH", "/usr/bin")
-	t.Setenv(codexEnvNoProxy, "localhost, .ZITI")
-	t.Setenv(codexEnvNoProxyLower, "127.0.0.1, localhost, gateway.ziti")
-	cfg := config.Config{LLMBaseURL: "http://llm-proxy.ziti:443/v1"}
+	t.Setenv(codexEnvNoProxy, "localhost, .AGYN")
+	t.Setenv(codexEnvNoProxyLower, "127.0.0.1, localhost, gateway.agyn")
+	cfg := config.Config{LLMBaseURL: "http://llm-proxy.agyn:443/v1"}
 
 	env := codexEnv(cfg, "/tmp/.codex", "/tmp")
 
-	want := "localhost,.ZITI,127.0.0.1,gateway.ziti,llm-proxy.ziti,tracing.ziti"
+	want := "localhost,.AGYN,127.0.0.1,gateway.agyn,llm-proxy.agyn,tracing.agyn"
 	if env[codexEnvNoProxyLower] != env[codexEnvNoProxy] {
 		t.Fatalf("expected proxy bypass env spellings to match: %s=%q %s=%q", codexEnvNoProxy, env[codexEnvNoProxy], codexEnvNoProxyLower, env[codexEnvNoProxyLower])
 	}
@@ -213,7 +213,7 @@ func TestCodexEnvClearsProxyVarsForZitiLLM(t *testing.T) {
 	for _, key := range codexProxyEnvVars {
 		t.Setenv(key, "http://proxy.invalid:8080")
 	}
-	cfg := config.Config{LLMBaseURL: "http://llm-proxy.ziti:443/v1"}
+	cfg := config.Config{LLMBaseURL: "http://llm-proxy.agyn:443/v1"}
 
 	env := codexEnv(cfg, "/tmp/.codex", "/tmp")
 
@@ -251,8 +251,8 @@ func TestCodexEnvDoesNotSetNoProxyForPublicLLM(t *testing.T) {
 }
 
 func TestZitiNoProxyValue(t *testing.T) {
-	got := zitiNoProxyValue(" localhost, .ZITI,,gateway.ziti ", "127.0.0.1,localhost")
-	want := "localhost,.ZITI,gateway.ziti,127.0.0.1,llm-proxy.ziti,tracing.ziti"
+	got := zitiNoProxyValue(" localhost, .AGYN,,gateway.agyn ", "127.0.0.1,localhost")
+	want := "localhost,.AGYN,gateway.agyn,127.0.0.1,llm-proxy.agyn,tracing.agyn"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
@@ -296,7 +296,7 @@ func TestZitiCodexProcessReceivesNoAuthEnvConfig(t *testing.T) {
 	t.Setenv(codexEnvCodexAccessToken, "parent-access-token")
 	t.Setenv("PATH", "/usr/bin")
 	cfg := config.Config{
-		LLMBaseURL:  "http://llm-proxy.ziti:443/v1",
+		LLMBaseURL:  "http://llm-proxy.agyn:443/v1",
 		LLMAPIToken: "agent-env-token",
 	}
 
@@ -332,11 +332,12 @@ func TestIsZitiLLMBaseURL(t *testing.T) {
 		url  string
 		want bool
 	}{
-		{name: "platform proxy", url: "http://llm-proxy.ziti:443/v1", want: true},
-		{name: "nested ziti host", url: "https://models.mesh.ziti/v1", want: true},
-		{name: "uppercase host", url: " HTTP://LLM-PROXY.ZITI:443/v1 ", want: true},
+		{name: "platform proxy", url: "http://llm-proxy.agyn:443/v1", want: true},
+		{name: "nested overlay host", url: "https://models.mesh.agyn/v1", want: true},
+		{name: "uppercase host", url: " HTTP://LLM-PROXY.AGYN:443/v1 ", want: true},
 		{name: "public endpoint", url: "https://llm.example/v1", want: false},
-		{name: "ziti as registrable suffix", url: "https://exampleziti/v1", want: false},
+		{name: "platform's own domain", url: "https://llm-proxy.agyn.dev/v1", want: false},
+		{name: "overlay tld as registrable suffix", url: "https://exampleagyn/v1", want: false},
 		{name: "invalid url", url: "://bad", want: false},
 	}
 

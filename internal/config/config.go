@@ -90,11 +90,11 @@ func fromEnv(configPath string) (Config, error) {
 	environmentID := strings.TrimSpace(os.Getenv("ENVIRONMENT_ID"))
 	gatewayAddress := strings.TrimSpace(os.Getenv("GATEWAY_ADDRESS"))
 	if gatewayAddress == "" {
-		gatewayAddress = "gateway.ziti:443"
+		gatewayAddress = "gateway.agyn:443"
 	}
 	tracingAddress := strings.TrimSpace(os.Getenv("TRACING_ADDRESS"))
 	if tracingAddress == "" {
-		tracingAddress = "tracing.ziti:443"
+		tracingAddress = "tracing.agyn:443"
 	}
 	agentInstanceID, err := uuidutil.ParseUUID(strings.TrimSpace(os.Getenv("AGENT_INSTANCE_ID")), "AGENT_INSTANCE_ID")
 	if err != nil {
@@ -218,7 +218,7 @@ func llmBaseURLFromEnv() string {
 	if llmBaseURL := strings.TrimSpace(os.Getenv("LLM_BASE_URL")); llmBaseURL != "" {
 		return llmBaseURL
 	}
-	return "http://llm-proxy.ziti:443/v1"
+	return "http://llm-proxy.agyn:443/v1"
 }
 
 func llmAPITokenFromEnv() string {

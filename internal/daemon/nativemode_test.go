@@ -15,7 +15,7 @@ func TestWriteClaudeSettingsNativeOmitsEndpoint(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	servers := []config.MCPServer{{Name: "platform", Port: 9100}}
-	if err := writeClaudeSettings("http://llm-proxy.ziti:443", "token", servers, true); err != nil {
+	if err := writeClaudeSettings("http://llm-proxy.agyn:443", "token", servers, true); err != nil {
 		t.Fatalf("write claude settings: %v", err)
 	}
 
@@ -55,7 +55,7 @@ func TestWriteClaudeSettingsPlatformKeepsEndpoint(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	if err := writeClaudeSettings("http://llm-proxy.ziti:443", "token", nil, false); err != nil {
+	if err := writeClaudeSettings("http://llm-proxy.agyn:443", "token", nil, false); err != nil {
 		t.Fatalf("write claude settings: %v", err)
 	}
 	payload, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
@@ -66,7 +66,7 @@ func TestWriteClaudeSettingsPlatformKeepsEndpoint(t *testing.T) {
 	if err := json.Unmarshal(payload, &settings); err != nil {
 		t.Fatalf("decode settings: %v", err)
 	}
-	if settings.Env["ANTHROPIC_BASE_URL"] != "http://llm-proxy.ziti:443" {
+	if settings.Env["ANTHROPIC_BASE_URL"] != "http://llm-proxy.agyn:443" {
 		t.Fatalf("platform settings lost the base URL: %+v", settings.Env)
 	}
 	if settings.Env["ANTHROPIC_API_KEY"] != "token" {
@@ -76,7 +76,7 @@ func TestWriteClaudeSettingsPlatformKeepsEndpoint(t *testing.T) {
 
 func TestCodexConfigNativeOmitsProvider(t *testing.T) {
 	cfg := config.Config{
-		LLMBaseURL: "http://llm-proxy.ziti:443/v1",
+		LLMBaseURL: "http://llm-proxy.agyn:443/v1",
 		LLMNative:  true,
 		MCPServers: []config.MCPServer{{Name: "platform", Port: 9100}},
 	}
@@ -84,7 +84,7 @@ func TestCodexConfigNativeOmitsProvider(t *testing.T) {
 
 	// No endpoint and no credential. The provider below names neither -- it
 	// only settles transport, and codex keeps addressing its own vendor.
-	for _, forbidden := range []string{"base_url", "llm-proxy.ziti", "env_key"} {
+	for _, forbidden := range []string{"base_url", "llm-proxy.agyn", "env_key"} {
 		if strings.Contains(payload, forbidden) {
 			t.Fatalf("native codex config carries %q:\n%s", forbidden, payload)
 		}
@@ -109,7 +109,7 @@ func TestCodexConfigNativeOmitsProvider(t *testing.T) {
 }
 
 func TestCodexEnvNativeKeepsPlaceholder(t *testing.T) {
-	cfg := config.Config{LLMBaseURL: "http://llm-proxy.ziti:443/v1", LLMNative: true, LLMAPIToken: "platform"}
+	cfg := config.Config{LLMBaseURL: "http://llm-proxy.agyn:443/v1", LLMNative: true, LLMAPIToken: "platform"}
 	env := codexEnv(cfg, "/home/agent/.codex", "/home/agent")
 
 	// The placeholder codex reads is on the container; overwriting the variable

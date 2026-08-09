@@ -93,7 +93,7 @@ supports_websockets = false
 const codexAPIKeyEnv = `env_key = "OPENAI_API_KEY"
 `
 
-const zitiHostnameSuffix = ".ziti"
+const zitiHostnameSuffix = ".agyn"
 
 const (
 	codexEnvPath             = "PATH"
@@ -113,10 +113,10 @@ const (
 )
 
 var codexZitiNoProxyHosts = []string{
-	".ziti",
-	"llm-proxy.ziti",
-	"gateway.ziti",
-	"tracing.ziti",
+	".agyn",
+	"llm-proxy.agyn",
+	"gateway.agyn",
+	"tracing.agyn",
 }
 
 var codexAuthEnvMu sync.Mutex

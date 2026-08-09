@@ -22,7 +22,7 @@ func TestHolderModePreparesTheAgentCLI(t *testing.T) {
 		Mode:       config.ModeHolder,
 		SDK:        SDKClaude,
 		WorkDir:    t.TempDir(),
-		LLMBaseURL: "http://llm-proxy.ziti:443/v1",
+		LLMBaseURL: "http://llm-proxy.agyn:443/v1",
 		MCPServers: []config.MCPServer{{Name: "files", Port: 9100}},
 	}
 	if _, err := New(context.Background(), cfg, "test"); err != nil {
@@ -70,7 +70,7 @@ func TestAgentModePreparesStateButDefersSettings(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	cfg := config.Config{Mode: config.ModeAgent, SDK: SDKClaude, LLMBaseURL: "http://llm-proxy.ziti:443/v1"}
+	cfg := config.Config{Mode: config.ModeAgent, SDK: SDKClaude, LLMBaseURL: "http://llm-proxy.agyn:443/v1"}
 	if err := prepareAgentCLI(cfg); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
