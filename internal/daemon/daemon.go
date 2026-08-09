@@ -24,6 +24,7 @@ import (
 	"github.com/agynio/agynd-cli/internal/config"
 	"github.com/agynio/agynd-cli/internal/platform"
 	"github.com/agynio/agynd-cli/internal/subscriber"
+	"github.com/agynio/agynd-cli/internal/tracing"
 	"github.com/agynio/agynd-cli/internal/tracingproxy"
 	claude "github.com/agynio/claude-sdk-go"
 	codex "github.com/agynio/codex-sdk-go"
@@ -98,6 +99,7 @@ type Daemon struct {
 	claude        claudeClient
 	agent         *agentsv1.Agent
 	tracingProxy  *tracingproxy.Proxy
+	tracing       *tracing.Exporter
 	claudeReadyMu sync.Mutex
 	claudeReady   bool
 	mcpReadyMu    sync.Mutex
@@ -321,6 +323,18 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}
+	// What the platform handed the agent CLI is exported here; what the CLI did
+	// with it is exported by the tracing plugin, into the trace both derive from
+	// the workload.
+	tracingExporter, err := tracing.NewExporter(tracing.Config{
+		Address:    cfg.TracingAddress,
+		WorkloadID: cfg.WorkloadID,
+	})
+	if err != nil {
+		tracingProxy.Close()
+		_ = setup.gatewayConn.Close()
+		return nil, err
+	}
 	otlpEndpoint := "http://" + tracingProxy.Address()
 	// Codex exports over OTLP/HTTP and everything else over gRPC; see the otel
 	// block in the codex config for why.
@@ -378,6 +392,7 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 		tracker:      tracker,
 		agent:        setup.agent,
 		tracingProxy: tracingProxy,
+		tracing:      tracingExporter,
 	}, nil
 }
 
@@ -390,6 +405,9 @@ func (d *Daemon) Close() {
 	}
 	if d.claude != nil {
 		_ = d.claude.Close()
+	}
+	if d.tracing != nil {
+		_ = d.tracing.Close()
 	}
 	if d.tracingProxy != nil {
 		d.tracingProxy.Close()
@@ -690,6 +708,7 @@ func (d *Daemon) syncMessages(ctx context.Context) error {
 			d.tracingProxy.SetThreadID(message.ThreadID)
 			d.tracingProxy.SetMessageID(message.ID)
 		}
+		d.recordInvocation(ctx, message)
 		if err := d.ensureMCPReady(ctx); err != nil {
 			return fmt.Errorf("wait for MCP servers before processing message %s: %w", message.ID, err)
 		}
@@ -1262,4 +1281,23 @@ func messageHeader(message platform.Message) string {
 	}
 	header.WriteString("---\n")
 	return header.String()
+}
+
+// recordInvocation exports the message that opened this turn. Tracing is an
+// optional dependency, so a failure is reported and the turn proceeds -- an
+// unreachable Tracing service must not cost the agent a message.
+func (d *Daemon) recordInvocation(ctx context.Context, message platform.Message) {
+	if d.tracing == nil {
+		return
+	}
+	err := d.tracing.InvocationMessage(ctx, tracing.Message{
+		ID:        message.ID,
+		ThreadID:  message.ThreadID,
+		SenderID:  message.SenderID,
+		Body:      message.Body,
+		CreatedAt: message.CreatedAt,
+	})
+	if err != nil {
+		log.Printf("tracing: record invocation for message %s: %v", message.ID, err)
+	}
 }
