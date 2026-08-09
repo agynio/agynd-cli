@@ -952,10 +952,10 @@ func TestCodexThreadDefaultsTakeTheSystemPromptFromConfiguration(t *testing.T) {
 
 	defaults := daemon.codexThreadDefaults()
 
-	if defaults.developerInstructions == nil {
+	if defaults.baseInstructions == nil {
 		t.Fatal("expected the configured system prompt to be sent")
 	}
-	if got := *defaults.developerInstructions; got != "you are support agent" {
+	if got := *defaults.baseInstructions; got != "you are support agent" {
 		t.Fatalf("expected the system prompt, got %q", got)
 	}
 }
@@ -967,7 +967,9 @@ func TestCodexThreadDefaultsSendNothingWithoutAPrompt(t *testing.T) {
 
 	defaults := daemon.codexThreadDefaults()
 
-	if defaults.developerInstructions != nil {
-		t.Fatalf("expected no instructions, got %q", *defaults.developerInstructions)
+	// Nothing sent means codex renders its own, which is the only way an agent
+	// without a prompt gets one at all.
+	if defaults.baseInstructions != nil {
+		t.Fatalf("expected no instructions, got %q", *defaults.baseInstructions)
 	}
 }
