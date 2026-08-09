@@ -46,7 +46,7 @@ ENV CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     go build -trimpath -ldflags "-s -w" -o /out/agynd ./cmd/agynd && \
-    go build -trimpath -ldflags "-s -w" -o /out/agyn-trace-hook ./cmd/agyn-trace-hook
+    go build -trimpath -ldflags "-s -w" -o /out/agynd-trace-hook ./cmd/agynd-trace-hook
 
 FROM busybox:1.37-musl AS runtime
 
@@ -54,10 +54,10 @@ COPY --from=build /out/agynd /opt/agyn/agynd
 # The trace hook ships with agynd rather than with an agent runtime image: an
 # agent CLI runs it, but what it exports is the platform's own record, and it
 # must never lag the platform for the same reason agynd must not.
-COPY --from=build /out/agyn-trace-hook /opt/agyn/agyn-trace-hook
+COPY --from=build /out/agynd-trace-hook /opt/agyn/agynd-trace-hook
 
 # The Orchestrator sets no command: the image describes how it delivers itself.
 # It runs as root because the emptyDir it writes into is root-owned on a fresh
 # Pod; the copied binary is world-executable so the main container can run it
 # whatever user its image defines.
-ENTRYPOINT ["/bin/sh", "-c", "set -e; mkdir -p /agyn/bin; cp /opt/agyn/agynd /agyn/bin/agynd; chmod 0755 /agyn/bin/agynd; cp /opt/agyn/agyn-trace-hook /agyn/bin/agyn-trace-hook; chmod 0755 /agyn/bin/agyn-trace-hook"]
+ENTRYPOINT ["/bin/sh", "-c", "set -e; mkdir -p /agyn/bin; cp /opt/agyn/agynd /agyn/bin/agynd; chmod 0755 /agyn/bin/agynd; cp /opt/agyn/agynd-trace-hook /agyn/bin/agynd-trace-hook; chmod 0755 /agyn/bin/agynd-trace-hook"]

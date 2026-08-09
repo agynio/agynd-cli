@@ -25,7 +25,7 @@ sandbox_mode = "danger-full-access"
 // traceHookCommand is the platform's trace hook, delivered to /agyn/bin beside
 // agynd and reached by name because that directory is on the agent's PATH.
 const (
-	traceHookCommand     = "agyn-trace-hook"
+	traceHookCommand     = "agynd-trace-hook"
 	traceHookFormatEnv   = "AGYN_TRACE_FORMAT"
 	traceHookAddressEnv  = "TRACING_ADDRESS"
 	traceHookTraceEnv    = "AGYN_TRACE_ID"

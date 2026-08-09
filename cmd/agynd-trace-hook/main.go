@@ -1,4 +1,4 @@
-// Command agyn-trace-hook exports what an agent CLI recorded of a turn.
+// Command agynd-trace-hook exports what an agent CLI recorded of a turn.
 //
 // The agent CLI runs it on turn completion and hands it the session transcript.
 // It reads the turns it has not sent, exports them to the Tracing service, and
@@ -34,7 +34,7 @@ const traceIDLength = 16
 
 func main() {
 	log.SetFlags(0)
-	log.SetPrefix("agyn-trace-hook: ")
+	log.SetPrefix("agynd-trace-hook: ")
 	if err := run(); err != nil {
 		// Reported, never returned: the exit code is the agent CLI's signal to
 		// continue, and a turn must not be lost to a tracing failure.
