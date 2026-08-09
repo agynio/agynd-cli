@@ -19,6 +19,13 @@ type codexLine struct {
 
 type codexSessionMeta struct {
 	ID string `json:"id"`
+	// What the model was told before anything else. Recorded once, on the line
+	// that opens the session, rather than repeated per turn.
+	BaseInstructions *codexBaseInstructions `json:"base_instructions"`
+}
+
+type codexBaseInstructions struct {
+	Text string `json:"text"`
 }
 
 type codexTurnContext struct {
@@ -85,6 +92,13 @@ func parseCodex(data []byte) ([]Turn, error) {
 			var meta codexSessionMeta
 			if json.Unmarshal(line.Payload, &meta) == nil {
 				sessionID = meta.ID
+				if meta.BaseInstructions != nil && meta.BaseInstructions.Text != "" {
+					seen.add(ContextItem{
+						Role: "system",
+						Text: meta.BaseInstructions.Text,
+						At:   line.Timestamp,
+					})
+				}
 			}
 		case "turn_context":
 			var context codexTurnContext
