@@ -1,6 +1,7 @@
 package tracing
 
 import (
+	"bytes"
 	"context"
 	"net"
 	"testing"
@@ -139,5 +140,42 @@ func TestInvocationMessageRejectsAMessageItCannotIdentify(t *testing.T) {
 	exporter, _ := startExporter(t, "workload-1")
 	if err := exporter.InvocationMessage(context.Background(), Message{Body: "hello"}); err == nil {
 		t.Fatal("expected a message with no id to be rejected")
+	}
+}
+
+// A hook is handed a trace rather than deriving one, so what it exports has to
+// land in the trace it was given and not in the one its workload would name.
+func TestExporterWritesIntoTheTraceItWasGiven(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	service := &recordingService{}
+	server := grpc.NewServer()
+	collectortracev1.RegisterTraceServiceServer(server, service)
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(server.Stop)
+
+	given := TraceID("opened-elsewhere")
+	exporter, err := NewExporter(Config{
+		Address:    listener.Addr().String(),
+		TraceID:    given,
+		WorkloadID: "workload-1",
+	})
+	if err != nil {
+		t.Fatalf("new exporter: %v", err)
+	}
+	t.Cleanup(func() { _ = exporter.Close() })
+
+	if err := exporter.InvocationMessage(context.Background(), sampleMessage()); err != nil {
+		t.Fatalf("expected the message to export, got %v", err)
+	}
+
+	span, _ := onlySpan(t, service)
+	if !bytes.Equal(span.TraceId, given) {
+		t.Fatalf("expected the given trace %x, got %x", given, span.TraceId)
+	}
+	if bytes.Equal(span.TraceId, TraceID("workload-1")) {
+		t.Fatal("expected the given trace rather than the workload's own")
 	}
 }

@@ -1,9 +1,9 @@
 // Package tracing exports spans to the Tracing service.
 //
 // A producer dials the service itself and is attributed to the identity it
-// holds, so nothing enriches spans on the way out. What the agent CLI did is
-// exported by the tracing plugin the agent runtime carries; what the platform
-// handed it is exported here.
+// holds, so nothing enriches spans on the way out. Both producers ship with
+// agynd: the daemon exports what the platform handed the agent CLI, and the
+// trace hook exports what the CLI did with it.
 package tracing
 
 import (
@@ -35,15 +35,19 @@ const (
 type Config struct {
 	// Address of the Tracing service, reached over the OpenZiti overlay.
 	Address string
-	// Names the wake cycle. Every producer in the container derives the trace
-	// from it, which is how a turn's spans and the message that opened it meet
-	// without anything being passed between them.
+	// The trace to write into. agynd opens one per wake cycle and hands it to
+	// the trace hook, so what the platform sent and what the agent CLI did with
+	// it land in the same trace. Defaults to the workload's own.
+	TraceID []byte
+	// Recorded on what is exported, and the trace agynd opens is derived from
+	// it.
 	WorkloadID string
 }
 
 type Exporter struct {
 	conn       *grpc.ClientConn
 	client     collectortracev1.TraceServiceClient
+	traceID    []byte
 	workloadID string
 }
 
@@ -55,9 +59,14 @@ func NewExporter(cfg Config) (*Exporter, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dial tracing address: %w", err)
 	}
+	traceID := cfg.TraceID
+	if len(traceID) == 0 {
+		traceID = TraceID(cfg.WorkloadID)
+	}
 	return &Exporter{
 		conn:       conn,
 		client:     collectortracev1.NewTraceServiceClient(conn),
+		traceID:    traceID,
 		workloadID: cfg.WorkloadID,
 	}, nil
 }
@@ -83,7 +92,7 @@ func (e *Exporter) InvocationMessage(ctx context.Context, message Message) error
 		at = time.Now().UTC()
 	}
 	span := &tracev1.Span{
-		TraceId: TraceID(e.workloadID),
+		TraceId: e.traceID,
 		SpanId:  SpanID(message.ID, "message"),
 		Name:    spanInvocationMessage,
 		Kind:    tracev1.Span_SPAN_KIND_INTERNAL,
@@ -128,10 +137,9 @@ func (e *Exporter) Close() error {
 	return e.conn.Close()
 }
 
-// TraceID derives the trace from the workload, which is one wake cycle. Every
-// producer in the container derives it the same way, so they share a trace
-// without passing an identifier between them -- and without drifting apart if
-// one of them restarts inside the pod.
+// TraceID opens the trace for a wake cycle. Derived from the workload rather
+// than drawn, so an agynd restarted inside the pod reopens the trace it was
+// already writing instead of splitting the cycle in two.
 func TraceID(workloadID string) []byte {
 	sum := sha256.Sum256([]byte("agyn.trace." + workloadID))
 	return sum[:16]
@@ -163,7 +171,7 @@ const (
 // from different clocks.
 func (e *Exporter) Turns(ctx context.Context, turns []transcript.Turn) error {
 	var spans []*tracev1.Span
-	traceID := TraceID(e.workloadID)
+	traceID := e.traceID
 	for _, turn := range turns {
 		spans = append(spans, e.turnSpans(traceID, turn)...)
 	}

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"net/url"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/agynio/agynd-cli/internal/config"
+	"github.com/agynio/agynd-cli/internal/tracing"
 	codex "github.com/agynio/codex-sdk-go"
 )
 
@@ -26,6 +28,7 @@ const (
 	traceHookCommand     = "agyn-trace-hook"
 	traceHookFormatEnv   = "AGYN_TRACE_FORMAT"
 	traceHookAddressEnv  = "TRACING_ADDRESS"
+	traceHookTraceEnv    = "AGYN_TRACE_ID"
 	traceHookWorkloadEnv = "WORKLOAD_ID"
 
 	traceFormatCodex  = "codex"
@@ -146,9 +149,11 @@ func codexEnv(cfg config.Config, codexHome, codexHomeValue string) map[string]st
 		codexEnvCodexHome: codexHome,
 		codexEnvHome:      codexHomeValue,
 		// The hook is told which transcript it is being handed rather than
-		// sniffing the file, and where to export what it reads.
+		// sniffing the file, where to export what it reads, and which trace to
+		// write into -- the one agynd opened for this wake cycle.
 		traceHookFormatEnv:   traceFormatCodex,
 		traceHookAddressEnv:  cfg.TracingAddress,
+		traceHookTraceEnv:    traceHookTraceID(cfg.WorkloadID),
 		traceHookWorkloadEnv: cfg.WorkloadID,
 	}
 	// Native mode carries no platform credential at all: the placeholder codex
@@ -167,6 +172,12 @@ func codexEnv(cfg config.Config, codexHome, codexHomeValue string) map[string]st
 		env[codexEnvOpenAIAPIKey] = cfg.LLMAPIToken
 	}
 	return env
+}
+
+// The hook is handed the trace as hex rather than the workload it came from,
+// so agynd stays the one that decides what a trace is.
+func traceHookTraceID(workloadID string) string {
+	return hex.EncodeToString(tracing.TraceID(workloadID))
 }
 
 func zitiNoProxyValue(values ...string) string {

@@ -37,9 +37,9 @@ func newClaudeDaemon(ctx context.Context, cfg config.Config, version string) (*D
 		return nil, err
 	}
 
-	// What the platform hands the agent CLI is exported here; what the CLI
-	// did with it is exported by the trace hook, into the trace both derive
-	// from the workload.
+	// What the platform hands the agent CLI is exported here; what the CLI did
+	// with it is exported by the trace hook, into the trace opened here and
+	// handed to it below.
 	tracingExporter, err := tracing.NewExporter(tracing.Config{
 		Address:    cfg.TracingAddress,
 		WorkloadID: cfg.WorkloadID,
@@ -59,6 +59,7 @@ func newClaudeDaemon(ctx context.Context, cfg config.Config, version string) (*D
 			// than sniffing the file, and where to export what it reads.
 			traceHookFormatEnv + "=" + traceFormatClaude,
 			traceHookAddressEnv + "=" + cfg.TracingAddress,
+			traceHookTraceEnv + "=" + traceHookTraceID(cfg.WorkloadID),
 			traceHookWorkloadEnv + "=" + cfg.WorkloadID,
 			"IS_SANDBOX=1",
 		},

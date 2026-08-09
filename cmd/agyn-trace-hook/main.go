@@ -12,6 +12,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,6 +27,10 @@ import (
 )
 
 const exportTimeout = 20 * time.Second
+
+// A trace id is 16 bytes, so an id of any other length is a misconfiguration
+// rather than a trace nobody has written to yet.
+const traceIDLength = 16
 
 func main() {
 	log.SetFlags(0)
@@ -78,8 +83,16 @@ func run() error {
 		return nil
 	}
 
+	// agynd opened the trace and named it in the environment it set up. A hook
+	// that was given no trace has nothing to attach to, so it exports nothing
+	// rather than opening a second one.
+	traceID, err := hex.DecodeString(os.Getenv("AGYN_TRACE_ID"))
+	if err != nil || len(traceID) != traceIDLength {
+		return fmt.Errorf("AGYN_TRACE_ID is not a trace id")
+	}
 	exporter, err := tracing.NewExporter(tracing.Config{
 		Address:    address,
+		TraceID:    traceID,
 		WorkloadID: os.Getenv("WORKLOAD_ID"),
 	})
 	if err != nil {

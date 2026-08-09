@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/agynio/agynd-cli/internal/config"
+	"github.com/agynio/agynd-cli/internal/tracing"
 	codex "github.com/agynio/codex-sdk-go"
 )
 
@@ -357,6 +359,20 @@ func assertCodexBaseEnv(t *testing.T, env map[string]string) {
 	}
 	if env[codexEnvHome] != "/tmp" {
 		t.Fatalf("expected HOME, got %q", env[codexEnvHome])
+	}
+}
+
+// The hook writes into the trace agynd opened, so it has to be handed the same
+// one agynd is exporting the invocation message into.
+func TestCodexEnvCarriesTheTraceAgyndOpened(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin")
+	cfg := config.Config{LLMBaseURL: "https://llm.example/v1", WorkloadID: "workload-1"}
+
+	env := codexEnv(cfg, "/tmp/.codex", "/tmp")
+
+	want := hex.EncodeToString(tracing.TraceID("workload-1"))
+	if env[traceHookTraceEnv] != want {
+		t.Fatalf("expected %s %q, got %q", traceHookTraceEnv, want, env[traceHookTraceEnv])
 	}
 }
 
