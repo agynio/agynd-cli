@@ -15,6 +15,7 @@ import (
 	collectorlogsv1 "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	collectortracev1 "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	commonv1 "go.opentelemetry.io/proto/otlp/common/v1"
+	logsv1 "go.opentelemetry.io/proto/otlp/logs/v1"
 	resourcev1 "go.opentelemetry.io/proto/otlp/resource/v1"
 	tracev1 "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/grpc"
@@ -57,6 +58,10 @@ type Proxy struct {
 	threadID  string
 	messageMu sync.RWMutex
 	messageID string
+	// Usage counts arrive on a later event than the call they belong to, so the
+	// call is held until they do and re-emitted with them.
+	llmCallMu sync.Mutex
+	llmCalls  map[string]*pendingLLMCall
 }
 
 func Start(ctx context.Context, cfg Config) (*Proxy, error) {
@@ -155,9 +160,9 @@ func (p *Proxy) serveHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(encoded)
 }
 
-// serveHTTPLogs records what codex ships over the log signal -- prompts, tool
-// calls and SSE events -- which has no ingest path yet, so it is logged and
-// acknowledged rather than forwarded.
+// serveHTTPLogs takes the signal codex ships its structured events on -- the
+// prompt, the model call, the usage counts -- and translates them into spans,
+// because the tracing service stores traces and nothing else.
 func (p *Proxy) serveHTTPLogs(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxHTTPExportBytes))
 	if err != nil {
@@ -169,7 +174,22 @@ func (p *Proxy) serveHTTPLogs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "decode OTLP request", http.StatusBadRequest)
 		return
 	}
-	logExportedRecords(request)
+	if spans := p.semanticSpans(request); len(spans) > 0 {
+		export := &collectortracev1.ExportTraceServiceRequest{
+			ResourceSpans: []*tracev1.ResourceSpans{{
+				ScopeSpans: []*tracev1.ScopeSpans{{
+					Scope: &commonv1.InstrumentationScope{Name: semanticScopeName},
+					Spans: spans,
+				}},
+			}},
+		}
+		// Export, not the upstream directly: the thread, message and workload
+		// this run belongs to are injected there, and without them a span is
+		// unreachable from the run view.
+		if _, err := p.Export(r.Context(), export); err != nil {
+			log.Printf("tracing proxy: export translated log spans: %v", err)
+		}
+	}
 	encoded, err := proto.Marshal(&collectorlogsv1.ExportLogsServiceResponse{})
 	if err != nil {
 		http.Error(w, "encode OTLP response", http.StatusInternalServerError)
@@ -179,23 +199,16 @@ func (p *Proxy) serveHTTPLogs(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(encoded)
 }
 
-func logExportedRecords(request *collectorlogsv1.ExportLogsServiceRequest) {
-	for _, resourceLogs := range request.ResourceLogs {
-		for _, scopeLogs := range resourceLogs.ScopeLogs {
-			scope := ""
-			if scopeLogs.Scope != nil {
-				scope = scopeLogs.Scope.Name
-			}
-			for _, record := range scopeLogs.LogRecords {
-				attrs := make([]string, 0, len(record.Attributes))
-				for _, attr := range record.Attributes {
-					attrs = append(attrs, attr.Key+"="+truncateValue(attr.Value))
-				}
-				log.Printf("otlp log: scope=%s severity=%s body=%s attrs={%s}",
-					scope, record.SeverityText, truncateValue(record.Body), strings.Join(attrs, " "))
-			}
-		}
+// logUntranslatedRecord reports an event no span was built from, so a codex
+// release that adds one -- tool calls above all -- surfaces here rather than
+// being dropped in silence. The SSE deltas are the one deliberate omission:
+// they fire per chunk and carry nothing but a duration.
+func logUntranslatedRecord(record *logsv1.LogRecord, name string) {
+	attrs := make([]string, 0, len(record.Attributes))
+	for _, attr := range record.Attributes {
+		attrs = append(attrs, attr.Key+"="+truncateValue(attr.Value))
 	}
+	log.Printf("otlp log: untranslated event=%s attrs={%s}", name, strings.Join(attrs, " "))
 }
 
 func truncateValue(value *commonv1.AnyValue) string {
