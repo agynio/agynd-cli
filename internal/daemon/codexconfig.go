@@ -16,11 +16,24 @@ import (
 	codex "github.com/agynio/codex-sdk-go"
 )
 
-// codexNativeConfigTemplate is the same file minus the endpoint: no
-// model_provider and no [model_providers] block, so codex talks to its own
-// vendor. Tracing and the mcp_servers appended below are unaffected.
-const codexNativeConfigTemplate = `approval_policy = "never"
+// codexNativeConfigTemplate names no endpoint and no credential: codex still
+// addresses its own vendor, and requires_openai_auth keeps it on the
+// subscription credential it already reads from auth.json.
+//
+// What the provider does declare is transport. codex prefers a WebSocket to
+// wss://chatgpt.com/backend-api/codex/responses, and the platform intercepts
+// that connection to terminate it on the proxy -- which speaks HTTP, so the
+// upgrade never completes and the vendor answers 404. supports_websockets
+// settles it on HTTP/SSE, over the same host and path.
+const codexNativeConfigTemplate = `model_provider = "openai_http"
+approval_policy = "never"
 sandbox_mode = "danger-full-access"
+
+[model_providers.openai_http]
+name = "OpenAI HTTP/SSE"
+wire_api = "responses"
+requires_openai_auth = true
+supports_websockets = false
 `
 
 // traceHookCommand is the platform's trace hook, delivered to /agyn/bin beside
