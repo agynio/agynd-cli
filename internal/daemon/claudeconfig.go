@@ -14,6 +14,30 @@ type claudeSettings struct {
 	Permissions claudePermissions          `json:"permissions"`
 	Env         map[string]string          `json:"env"`
 	MCPServers  map[string]claudeMCPServer `json:"mcpServers,omitempty"`
+	Hooks       map[string][]claudeMatcher `json:"hooks,omitempty"`
+}
+
+type claudeMatcher struct {
+	Hooks []claudeHook `json:"hooks"`
+}
+
+type claudeHook struct {
+	Type    string `json:"type"`
+	Command string `json:"command"`
+}
+
+// traceHooks runs the platform's trace hook when a turn completes and when the
+// session ends. Claude Code hands it the transcript, which is the record of
+// what the turn actually did; its telemetry reports only that a call happened.
+//
+// SessionEnd as well as Stop, because a session can end with a turn whose
+// completion never fired.
+func traceHooks() map[string][]claudeMatcher {
+	hook := claudeMatcher{Hooks: []claudeHook{{Type: "command", Command: traceHookCommand}}}
+	return map[string][]claudeMatcher{
+		"Stop":       {hook},
+		"SessionEnd": {hook},
+	}
 }
 
 type claudePermissions struct {
@@ -43,6 +67,7 @@ func writeClaudeSettings(llmBaseURL, apiKey string, mcpServers []config.MCPServe
 		return fmt.Errorf("create claude config dir: %w", err)
 	}
 	settings := claudeSettings{
+		Hooks: traceHooks(),
 		Permissions: claudePermissions{
 			DefaultMode: "bypassPermissions",
 			Allow: []string{

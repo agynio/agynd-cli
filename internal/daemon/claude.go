@@ -8,7 +8,7 @@ import (
 	"github.com/agynio/agynd-cli/internal/config"
 	"github.com/agynio/agynd-cli/internal/platform"
 	"github.com/agynio/agynd-cli/internal/subscriber"
-	"github.com/agynio/agynd-cli/internal/tracingproxy"
+	"github.com/agynio/agynd-cli/internal/tracing"
 	claude "github.com/agynio/claude-sdk-go"
 )
 
@@ -37,31 +37,29 @@ func newClaudeDaemon(ctx context.Context, cfg config.Config, version string) (*D
 		return nil, err
 	}
 
-	tracingProxy, err := tracingproxy.Start(ctx, tracingproxy.Config{
-		TracingAddress: cfg.TracingAddress,
-		ListenAddress:  tracingProxyListenAddress,
-		ThreadID:       cfg.ThreadID,
-		WorkloadID:     cfg.WorkloadID,
+	// What the platform hands the agent CLI is exported here; what the CLI
+	// did with it is exported by the trace hook, into the trace both derive
+	// from the workload.
+	tracingExporter, err := tracing.NewExporter(tracing.Config{
+		Address:    cfg.TracingAddress,
+		WorkloadID: cfg.WorkloadID,
 	})
 	if err != nil {
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}
 
-	otlpEndpoint := "http://" + tracingProxy.Address()
 	options := claude.Options{
 		BinaryPath: cfg.AgentBinary,
 		WorkDir:    cfg.WorkDir,
 		Env: []string{
 			"PATH=" + agentPathValue(),
 			"LD_LIBRARY_PATH=/agyn/bin/lib",
-			"CLAUDE_CODE_ENABLE_TELEMETRY=1",
-			"CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1",
-			"OTEL_TRACES_EXPORTER=otlp",
-			"OTEL_EXPORTER_OTLP_PROTOCOL=grpc",
-			"OTEL_EXPORTER_OTLP_ENDPOINT=" + otlpEndpoint,
-			"OTEL_METRICS_EXPORTER=none",
-			"OTEL_LOGS_EXPORTER=none",
+			// The hook is told which transcript it is being handed rather
+			// than sniffing the file, and where to export what it reads.
+			traceHookFormatEnv + "=" + traceFormatClaude,
+			traceHookAddressEnv + "=" + cfg.TracingAddress,
+			traceHookWorkloadEnv + "=" + cfg.WorkloadID,
 			"IS_SANDBOX=1",
 		},
 	}
@@ -82,24 +80,24 @@ func newClaudeDaemon(ctx context.Context, cfg config.Config, version string) (*D
 	}
 	claudeClient, err := claude.Start(ctx, options)
 	if err != nil {
-		tracingProxy.Close()
+		_ = tracingExporter.Close()
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}
 
 	return &Daemon{
-		cfg:          cfg,
-		sdk:          SDKClaude,
-		gatewayConn:  setup.gatewayConn,
-		threads:      setup.threads,
-		agents:       setup.agents,
-		agentInbox:   setup.agentInbox,
-		runners:      setup.runners,
-		subscriber:   subscriber.New(setup.notifications, cfg.ThreadID),
-		consumer:     platform.NewInboxConsumer(setup.agentInbox, pageSize, pageTimeout),
-		claude:       claudeClient,
-		agent:        setup.agent,
-		tracingProxy: tracingProxy,
+		cfg:         cfg,
+		sdk:         SDKClaude,
+		gatewayConn: setup.gatewayConn,
+		threads:     setup.threads,
+		agents:      setup.agents,
+		agentInbox:  setup.agentInbox,
+		runners:     setup.runners,
+		subscriber:  subscriber.New(setup.notifications, cfg.ThreadID),
+		consumer:    platform.NewInboxConsumer(setup.agentInbox, pageSize, pageTimeout),
+		claude:      claudeClient,
+		agent:       setup.agent,
+		tracing:     tracingExporter,
 	}, nil
 }
 

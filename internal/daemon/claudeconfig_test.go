@@ -32,6 +32,7 @@ func TestWriteClaudeSettings(t *testing.T) {
 	}
 
 	expected := claudeSettings{
+		Hooks: traceHooks(),
 		Permissions: claudePermissions{
 			DefaultMode: "bypassPermissions",
 			Allow: []string{
@@ -89,6 +90,7 @@ func TestWriteClaudeSettingsWithMCPServers(t *testing.T) {
 	}
 
 	expected := claudeSettings{
+		Hooks: traceHooks(),
 		Permissions: claudePermissions{
 			DefaultMode: "bypassPermissions",
 			Allow: []string{
@@ -164,5 +166,38 @@ func TestClaudeBaseURL(t *testing.T) {
 				t.Fatalf("expected %q, got %q", test.want, got)
 			}
 		})
+	}
+}
+
+// The hook is how a turn is recorded at all: Claude Code's own telemetry
+// reports that a call happened, and the transcript it hands the hook is what
+// says what was in it.
+func TestWriteClaudeSettingsRegistersTheTraceHook(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	if err := writeClaudeSettings("https://example.com", "test-api-key", nil, false); err != nil {
+		t.Fatalf("write claude settings: %v", err)
+	}
+	content, err := os.ReadFile(filepath.Join(tmpHome, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	var settings claudeSettings
+	if err := json.Unmarshal(content, &settings); err != nil {
+		t.Fatalf("decode settings: %v", err)
+	}
+
+	// SessionEnd as well as Stop: a session can end with a turn whose
+	// completion never fired.
+	for _, event := range []string{"Stop", "SessionEnd"} {
+		matchers, ok := settings.Hooks[event]
+		if !ok || len(matchers) != 1 || len(matchers[0].Hooks) != 1 {
+			t.Fatalf("expected one %s hook, got %#v", event, settings.Hooks[event])
+		}
+		hook := matchers[0].Hooks[0]
+		if hook.Type != "command" || hook.Command != traceHookCommand {
+			t.Fatalf("unexpected %s hook: %#v", event, hook)
+		}
 	}
 }

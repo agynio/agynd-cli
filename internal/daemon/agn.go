@@ -9,7 +9,7 @@ import (
 	"github.com/agynio/agynd-cli/internal/config"
 	"github.com/agynio/agynd-cli/internal/platform"
 	"github.com/agynio/agynd-cli/internal/subscriber"
-	"github.com/agynio/agynd-cli/internal/tracingproxy"
+	"github.com/agynio/agynd-cli/internal/tracing"
 )
 
 func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daemon, error) {
@@ -57,46 +57,45 @@ func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daem
 		return nil, err
 	}
 
-	tracingProxy, err := tracingproxy.Start(ctx, tracingproxy.Config{
-		TracingAddress: cfg.TracingAddress,
-		ListenAddress:  tracingProxyListenAddress,
-		ThreadID:       cfg.ThreadID,
-		WorkloadID:     cfg.WorkloadID,
+	// What the platform hands the agent CLI is exported here; what the CLI
+	// did with it is exported by the trace hook, into the trace both derive
+	// from the workload.
+	tracingExporter, err := tracing.NewExporter(tracing.Config{
+		Address:    cfg.TracingAddress,
+		WorkloadID: cfg.WorkloadID,
 	})
 	if err != nil {
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}
 
-	otlpEndpoint := "http://" + tracingProxy.Address()
 	agnClient, err := agnsdk.Start(ctx, agnsdk.Options{
 		BinaryPath: cfg.AgentBinary,
 		Env: []string{
 			"PATH=" + agentPathValue(),
 			"AGN_CONFIG_PATH=" + configPath,
-			"OTEL_EXPORTER_OTLP_ENDPOINT=" + otlpEndpoint,
 		},
 	})
 	if err != nil {
-		tracingProxy.Close()
+		_ = tracingExporter.Close()
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}
 
 	return &Daemon{
-		cfg:          cfg,
-		sdk:          SDKAgn,
-		gatewayConn:  setup.gatewayConn,
-		threads:      setup.threads,
-		agents:       setup.agents,
-		agentInbox:   setup.agentInbox,
-		runners:      setup.runners,
-		subscriber:   subscriber.New(setup.notifications, cfg.ThreadID),
-		consumer:     platform.NewInboxConsumer(setup.agentInbox, pageSize, pageTimeout),
-		agn:          agnClient,
-		agent:        setup.agent,
-		tracingProxy: tracingProxy,
-		mcpReady:     true,
+		cfg:         cfg,
+		sdk:         SDKAgn,
+		gatewayConn: setup.gatewayConn,
+		threads:     setup.threads,
+		agents:      setup.agents,
+		agentInbox:  setup.agentInbox,
+		runners:     setup.runners,
+		subscriber:  subscriber.New(setup.notifications, cfg.ThreadID),
+		consumer:    platform.NewInboxConsumer(setup.agentInbox, pageSize, pageTimeout),
+		agn:         agnClient,
+		agent:       setup.agent,
+		tracing:     tracingExporter,
+		mcpReady:    true,
 	}, nil
 }
 

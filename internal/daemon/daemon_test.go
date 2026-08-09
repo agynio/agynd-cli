@@ -773,7 +773,7 @@ func TestNewHolderModeDoesNotConnectPlatform(t *testing.T) {
 	if daemon.gatewayConn != nil || daemon.subscriber != nil || daemon.consumer != nil || daemon.agents != nil || daemon.runners != nil {
 		t.Fatal("holder mode initialized platform dependencies")
 	}
-	if daemon.codex != nil || daemon.agn != nil || daemon.claude != nil || daemon.tracingProxy != nil {
+	if daemon.codex != nil || daemon.agn != nil || daemon.claude != nil || daemon.tracing != nil {
 		t.Fatal("holder mode initialized agent runtime dependencies")
 	}
 }
