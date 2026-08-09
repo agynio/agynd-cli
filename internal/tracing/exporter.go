@@ -158,6 +158,61 @@ func SpanID(subject, part string) []byte {
 	return sum[:8]
 }
 
+// The platform proxies one vendor's wire protocol, which is what a reader is
+// being told here -- not which model answered.
+const llmSystem = "openai"
+
+// contextEvents renders what the model was shown, in order.
+func contextEvents(context []transcript.ContextItem) []*tracev1.Span_Event {
+	if len(context) == 0 {
+		return nil
+	}
+	events := make([]*tracev1.Span_Event, 0, len(context))
+	for _, item := range context {
+		attrs := []*commonv1.KeyValue{
+			stringAttr("agyn.context.role", firstNonEmpty(item.Role, "other")),
+			stringAttr("agyn.context.is_new", boolText(item.IsNew)),
+			intAttr("agyn.context.size_bytes", item.SizeBytes()),
+		}
+		if item.Text != "" {
+			attrs = append(attrs, stringAttr("agyn.context.text", item.Text))
+		}
+		if item.JSON != nil {
+			attrs = append(attrs, jsonAttr("agyn.context.content_json", item.JSON))
+		}
+		events = append(events, &tracev1.Span_Event{
+			Name:         eventLLMContextItem,
+			TimeUnixNano: instant(item.At, time.Time{}),
+			Attributes:   attrs,
+		})
+	}
+	return events
+}
+
+// The reader parses this as a list of call_id and name, so it is written in the
+// shape it is read in rather than the shape the transcript held.
+func toolCallsAttr(calls []transcript.ToolCall) *commonv1.KeyValue {
+	if len(calls) == 0 {
+		return nil
+	}
+	payload := make([]map[string]any, 0, len(calls))
+	for _, call := range calls {
+		payload = append(payload, map[string]any{
+			"call_id":   call.CallID,
+			"name":      call.Name,
+			"arguments": call.Arguments,
+		})
+	}
+	return jsonAttr("agyn.llm.tool_calls", payload)
+}
+
+func boolText(value bool) string {
+	if value {
+		return "true"
+	}
+	return "false"
+}
+
 func stringAttr(key, value string) *commonv1.KeyValue {
 	return &commonv1.KeyValue{
 		Key:   key,
@@ -168,6 +223,8 @@ func stringAttr(key, value string) *commonv1.KeyValue {
 const (
 	spanLLMCall       = "llm.call"
 	spanToolExecution = "tool.execution"
+
+	eventLLMContextItem = "agyn.llm.context_item"
 )
 
 // Turns exports what the agent CLI did. A call hangs off the message that
@@ -219,11 +276,18 @@ func (e *Exporter) turnSpans(traceID []byte, turn transcript.Turn) []*tracev1.Sp
 			EndTimeUnixNano:   instant(step.EndedAt, time.Time{}),
 			Attributes: []*commonv1.KeyValue{
 				stringAttr("gen_ai.request.model", firstNonEmpty(step.Model, turn.Model)),
+				stringAttr("gen_ai.system", llmSystem),
 			},
+			// What the model was shown is one event per item rather than one
+			// attribute: a reader pages through a context, and an attribute
+			// carrying a whole conversation cannot be paged.
+			Events: contextEvents(step.Context),
 			Status: &tracev1.Status{Code: tracev1.Status_STATUS_CODE_OK},
 		}
-		if step.Context != nil {
-			call.Attributes = append(call.Attributes, jsonAttr("agyn.llm.context", step.Context))
+		// The calls a turn made belong on the call that made them as well as on
+		// their own spans: a step that only called tools says nothing otherwise.
+		if calls := toolCallsAttr(step.ToolCalls); calls != nil {
+			call.Attributes = append(call.Attributes, calls)
 		}
 		if step.Text != "" {
 			call.Attributes = append(call.Attributes, stringAttr("agyn.llm.response_text", step.Text))

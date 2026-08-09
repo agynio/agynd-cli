@@ -71,6 +71,7 @@ func parseCodex(data []byte) ([]Turn, error) {
 	sessionID := ""
 	model := ""
 	pending := map[string]*ToolCall{}
+	seen := &history{}
 
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	scanner.Buffer(make([]byte, 0, 64*1024), maxTranscriptLine)
@@ -91,7 +92,7 @@ func parseCodex(data []byte) ([]Turn, error) {
 				model = context.Model
 			}
 		case "response_item":
-			current = applyCodexItem(&turns, current, line, sessionID, model, pending)
+			current = applyCodexItem(&turns, current, line, sessionID, model, pending, seen)
 		case "event_msg":
 			applyCodexUsage(current, line)
 		}
@@ -105,7 +106,7 @@ func parseCodex(data []byte) ([]Turn, error) {
 	return turns, nil
 }
 
-func applyCodexItem(turns *[]Turn, current *Turn, line codexLine, sessionID, model string, pending map[string]*ToolCall) *Turn {
+func applyCodexItem(turns *[]Turn, current *Turn, line codexLine, sessionID, model string, pending map[string]*ToolCall, seen *history) *Turn {
 	var item codexResponseItem
 	if err := json.Unmarshal(line.Payload, &item); err != nil {
 		return current
@@ -118,6 +119,7 @@ func applyCodexItem(turns *[]Turn, current *Turn, line codexLine, sessionID, mod
 		if current != nil {
 			*turns = append(*turns, *current)
 		}
+		seen.add(ContextItem{Role: "user", Text: codexText(item.Content), At: line.Timestamp})
 		return &Turn{
 			// The rollout has no turn id, so the moment it opened serves: it is
 			// stable across re-reads of the same file, which is what the span
@@ -132,15 +134,18 @@ func applyCodexItem(turns *[]Turn, current *Turn, line codexLine, sessionID, mod
 	if current == nil {
 		return nil
 	}
-	step := codexStep(current, line, model)
+	step := codexStep(current, line, model, seen)
 
 	switch item.Type {
 	case "message":
 		text := codexText(item.Content)
 		step.Text = joinText(step.Text, text)
 		current.FinalOutput = joinText(current.FinalOutput, text)
+		seen.add(ContextItem{Role: firstNonEmptyText(item.Role, "assistant"), Text: text, At: line.Timestamp})
 	case "reasoning":
-		step.Reasoning = joinText(step.Reasoning, codexText(item.Summary))
+		reasoning := codexText(item.Summary)
+		step.Reasoning = joinText(step.Reasoning, reasoning)
+		seen.add(ContextItem{Role: "assistant", Text: reasoning, At: line.Timestamp})
 	case "function_call", "local_shell_call", "custom_tool_call", "mcp_tool_call":
 		name := item.Name
 		if name == "" {
@@ -154,6 +159,7 @@ func applyCodexItem(turns *[]Turn, current *Turn, line codexLine, sessionID, mod
 			Arguments: nestedValue(item.Arguments),
 		})
 		pending[item.CallID] = &step.ToolCalls[len(step.ToolCalls)-1]
+		seen.add(ContextItem{Role: "assistant", Text: name, JSON: nestedValue(item.Arguments), At: line.Timestamp})
 	case "function_call_output", "custom_tool_call_output", "mcp_tool_call_output":
 		call, ok := pending[item.CallID]
 		if !ok {
@@ -161,6 +167,7 @@ func applyCodexItem(turns *[]Turn, current *Turn, line codexLine, sessionID, mod
 		}
 		call.EndedAt = line.Timestamp
 		call.Output = nestedValue(item.Output)
+		seen.add(ContextItem{Role: "tool", JSON: call.Output, At: line.Timestamp})
 		if item.Success != nil && !*item.Success {
 			call.Error = textOf(call.Output)
 		}
@@ -173,13 +180,16 @@ func applyCodexItem(turns *[]Turn, current *Turn, line codexLine, sessionID, mod
 
 // Codex does not delimit its model calls, so a turn's output is read as one
 // step. What it called and what it said belong to the same request either way.
-func codexStep(turn *Turn, line codexLine, model string) *Step {
+func codexStep(turn *Turn, line codexLine, model string, seen *history) *Step {
 	if len(turn.Steps) == 0 {
 		turn.Steps = append(turn.Steps, Step{
 			ID:        turn.ID + "@step",
 			StartedAt: line.Timestamp,
 			EndedAt:   line.Timestamp,
 			Model:     model,
+			// Taken when the step opens: what the model was shown is the
+			// conversation as it stood before it answered, not after.
+			Context: seen.snapshot(),
 		})
 	}
 	return &turn.Steps[len(turn.Steps)-1]

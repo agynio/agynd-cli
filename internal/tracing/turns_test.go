@@ -253,3 +253,68 @@ func TestExportingNoTurnsSendsNothing(t *testing.T) {
 		t.Fatalf("expected no export, got %d", len(service.requests))
 	}
 }
+
+// The context is what the run view pages through, and it is read from events
+// rather than an attribute -- an attribute carrying a whole conversation cannot
+// be paged.
+func TestCallCarriesWhatTheModelWasShown(t *testing.T) {
+	exporter, service := startExporter(t, "workload-1")
+	turn := sampleTurn()
+	at := turn.StartedAt
+	turn.Steps[0].Context = []transcript.ContextItem{
+		{Role: "user", Text: "list the files", IsNew: false, At: at},
+		{Role: "tool", JSON: map[string]any{"out": "a"}, IsNew: true, At: at.Add(time.Second)},
+	}
+
+	if err := exporter.Turns(context.Background(), []transcript.Turn{turn}); err != nil {
+		t.Fatalf("expected the turn to export, got %v", err)
+	}
+
+	call := spanNamed(t, exportedSpans(t, service), spanLLMCall)
+	if len(call.Events) != 2 {
+		t.Fatalf("expected one event per context item, got %d", len(call.Events))
+	}
+	if call.Events[0].Name != eventLLMContextItem {
+		t.Fatalf("expected %q, got %q", eventLLMContextItem, call.Events[0].Name)
+	}
+	if got := attr(call.Events[0].Attributes, "agyn.context.role"); got != "user" {
+		t.Fatalf("expected the role, got %q", got)
+	}
+	if got := attr(call.Events[0].Attributes, "agyn.context.text"); got != "list the files" {
+		t.Fatalf("expected the text, got %q", got)
+	}
+	// Read as a string, not a bool: that is the shape the reader parses.
+	if got := attr(call.Events[0].Attributes, "agyn.context.is_new"); got != "false" {
+		t.Fatalf("expected carried-over to be false, got %q", got)
+	}
+	if got := intAttrValue(call.Events[0].Attributes, "agyn.context.size_bytes"); got != 14 {
+		t.Fatalf("expected the size, got %d", got)
+	}
+	if got := attr(call.Events[1].Attributes, "agyn.context.is_new"); got != "true" {
+		t.Fatalf("expected the added item to be new, got %q", got)
+	}
+	if got := attr(call.Events[1].Attributes, "agyn.context.content_json"); got != `{"out":"a"}` {
+		t.Fatalf("expected structured content as JSON, got %q", got)
+	}
+}
+
+// A step that only called tools says nothing at all unless the calls are on it:
+// the reader lists them from the call, not from the executions beneath it.
+func TestCallListsTheToolsItCalled(t *testing.T) {
+	exporter, service := startExporter(t, "workload-1")
+
+	if err := exporter.Turns(context.Background(), []transcript.Turn{sampleTurn()}); err != nil {
+		t.Fatalf("expected the turn to export, got %v", err)
+	}
+
+	call := spanNamed(t, exportedSpans(t, service), spanLLMCall)
+	got := attr(call.Attributes, "agyn.llm.tool_calls")
+	// call_id and name are the two fields the reader requires of each entry.
+	want := `[{"arguments":{"command":"ls"},"call_id":"call-1","name":"shell"}]`
+	if got != want {
+		t.Fatalf("expected %s, got %s", want, got)
+	}
+	if got := attr(call.Attributes, "gen_ai.system"); got != llmSystem {
+		t.Fatalf("expected the system, got %q", got)
+	}
+}

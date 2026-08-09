@@ -41,11 +41,62 @@ type Step struct {
 	Model     string
 	Reasoning string
 	Text      string
-	// What the model was shown. The reason a turn is worth storing: without it
-	// a call records only that it happened.
-	Context   any
+	// What the model was shown, in order. The reason a turn is worth storing:
+	// without it a call records only that it happened.
+	Context   []ContextItem
 	ToolCalls []ToolCall
 	Usage     *Usage
+}
+
+// ContextItem is one thing the model was shown: a prompt, a reply it gave
+// earlier, a tool result it is now reading.
+type ContextItem struct {
+	Role string
+	Text string
+	// Set when the item is structured rather than prose -- a tool call's
+	// arguments, a tool's output.
+	JSON any
+	// False for what was carried over from an earlier call in the same session.
+	// A reader looking for what changed reads this rather than diffing.
+	IsNew bool
+	At    time.Time
+}
+
+// SizeBytes is what the item cost to send, which is what a reader comparing
+// calls is actually comparing.
+func (c ContextItem) SizeBytes() int64 {
+	if c.Text != "" {
+		return int64(len(c.Text))
+	}
+	return int64(len(textOf(c.JSON)))
+}
+
+// history accumulates what the session has shown the model, so a step can be
+// given the conversation as it stood when the model was called rather than the
+// fragment that belongs to that step alone.
+type history struct {
+	items []ContextItem
+	// Where the previous step ended, which is what makes the rest new.
+	sent int
+}
+
+func (h *history) add(item ContextItem) {
+	h.items = append(h.items, item)
+}
+
+// snapshot hands out the conversation so far, marking everything added since
+// the last snapshot as new.
+func (h *history) snapshot() []ContextItem {
+	if len(h.items) == 0 {
+		return nil
+	}
+	context := make([]ContextItem, len(h.items))
+	copy(context, h.items)
+	for i := range context {
+		context[i].IsNew = i >= h.sent
+	}
+	h.sent = len(h.items)
+	return context
 }
 
 type ToolCall struct {
@@ -130,6 +181,15 @@ func maxPtr(a, b *int64) *int64 {
 // A transcript line carries a whole prompt or a whole tool output, so the
 // scanner is given room a default one does not have.
 const maxTranscriptLine = 8 << 20
+
+func firstNonEmptyText(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
 
 func joinText(existing, addition string) string {
 	switch {

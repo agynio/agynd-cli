@@ -1,6 +1,9 @@
 package transcript
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Codex rollout lines: the session, the turn's model, a user message, a tool
 // call and its output, the model's reply, and the usage event that follows.
@@ -128,5 +131,59 @@ func TestCodexMarksAFailedToolCall(t *testing.T) {
 func TestParseRejectsAFormatItDoesNotKnow(t *testing.T) {
 	if _, err := Parse(Format("agn"), []byte("{}")); err == nil {
 		t.Fatal("expected an unknown format to be rejected")
+	}
+}
+
+// A call is worth storing because of what the model was shown. The context is
+// the conversation as it stood when the call was made, with what arrived since
+// the previous call marked as new.
+func TestCodexCarriesTheConversationAsContext(t *testing.T) {
+	turns, err := Parse(FormatCodex, []byte(strings.Join([]string{
+		`{"timestamp":"2026-08-09T05:00:00Z","type":"session_meta","payload":{"id":"session-1"}}`,
+		`{"timestamp":"2026-08-09T05:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"list the files"}]}}`,
+		`{"timestamp":"2026-08-09T05:00:02Z","type":"response_item","payload":{"type":"function_call","name":"shell","call_id":"call-1","arguments":"{\"cmd\":\"ls\"}"}}`,
+		`{"timestamp":"2026-08-09T05:00:03Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-1","output":"a\nb"}}`,
+		`{"timestamp":"2026-08-09T05:00:10Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"and again"}]}}`,
+		`{"timestamp":"2026-08-09T05:00:11Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}}`,
+	}, "\n")))
+	if err != nil {
+		t.Fatalf("expected the rollout to parse, got %v", err)
+	}
+	if len(turns) != 2 {
+		t.Fatalf("expected two turns, got %d", len(turns))
+	}
+
+	first := turns[0].Steps[0].Context
+	if len(first) != 1 || first[0].Role != "user" || first[0].Text != "list the files" {
+		t.Fatalf("expected the prompt as the first call's context, got %#v", first)
+	}
+	if !first[0].IsNew {
+		t.Fatal("expected the prompt to be new to the first call")
+	}
+
+	// The second call sees everything the first one did, plus what happened in
+	// between. Only the prompt was on screen when the first call was made; the
+	// tool call, its output and the new prompt all arrived after it, so they are
+	// what changed.
+	second := turns[1].Steps[0].Context
+	if len(second) != 4 {
+		t.Fatalf("expected the conversation so far, got %d items", len(second))
+	}
+	if second[0].IsNew {
+		t.Fatal("expected the prompt the first call already saw to be carried over")
+	}
+	for _, item := range second[1:] {
+		if !item.IsNew {
+			t.Fatalf("expected what arrived after the first call to be new, got %#v", item)
+		}
+	}
+	if second[3].Text != "and again" {
+		t.Fatalf("expected the new prompt last, got %#v", second[3])
+	}
+	if second[1].Role != "assistant" || second[1].Text != "shell" {
+		t.Fatalf("expected the tool call in the context, got %#v", second[1])
+	}
+	if second[2].Role != "tool" {
+		t.Fatalf("expected the tool output in the context, got %#v", second[2])
 	}
 }
