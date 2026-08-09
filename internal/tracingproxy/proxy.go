@@ -62,6 +62,8 @@ type Proxy struct {
 	// call is held until they do and re-emitted with them.
 	llmCallMu sync.Mutex
 	llmCalls  map[string]*pendingLLMCall
+	// The message a conversation is answering, so its calls hang off it.
+	messageSpans map[string]*tracev1.Span
 }
 
 func Start(ctx context.Context, cfg Config) (*Proxy, error) {

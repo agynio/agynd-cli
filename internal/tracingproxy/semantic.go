@@ -200,6 +200,7 @@ func (p *Proxy) messageSpan(record *logsv1.LogRecord, attrs logAttrs) *tracev1.S
 	if length, ok := attrs.int("prompt_length"); ok {
 		span.Attributes = append(span.Attributes, intAttr("agyn.message.length", length))
 	}
+	p.rememberMessage(attrs.str("conversation.id"), span)
 	return span
 }
 
@@ -209,9 +210,21 @@ func (p *Proxy) llmCallSpan(record *logsv1.LogRecord, attrs logAttrs) *tracev1.S
 	if duration, ok := attrs.int("duration_ms"); ok && duration > 0 {
 		start = end - uint64(duration)*uint64(time.Millisecond)
 	}
+	// The call belongs to the message being answered, so it hangs off it: the
+	// run view then reads in the order things happened rather than trusting a
+	// start this proxy derives by subtracting a duration codex reports.
+	parent := p.messageSpanFor(attrs.str("conversation.id"))
+	var parentID []byte
+	if parent != nil {
+		parentID = parent.SpanId
+		if start < parent.StartTimeUnixNano {
+			start = parent.StartTimeUnixNano
+		}
+	}
 	span := &tracev1.Span{
 		TraceId:           traceIDForMessage(p.traceSeed(attrs)),
 		SpanId:            newSpanID(),
+		ParentSpanId:      parentID,
 		Name:              spanLLMCall,
 		Kind:              tracev1.Span_SPAN_KIND_CLIENT,
 		StartTimeUnixNano: start,
@@ -243,10 +256,6 @@ func (p *Proxy) llmCallSpan(record *logsv1.LogRecord, attrs logAttrs) *tracev1.S
 // remembered span there is nothing to attach to -- usage alone is not a call --
 // so the record is dropped.
 func (p *Proxy) llmCallUsageSpan(attrs logAttrs) *tracev1.Span {
-	pending := p.takeLLMCall(attrs.str("conversation.id"))
-	if pending == nil {
-		return nil
-	}
 	usage := []struct {
 		source string
 		key    string
@@ -256,12 +265,45 @@ func (p *Proxy) llmCallUsageSpan(attrs logAttrs) *tracev1.Span {
 		{"cached_token_count", "gen_ai.usage.cache_read.input_tokens"},
 		{"reasoning_token_count", "agyn.usage.reasoning_tokens"},
 	}
+	counted := make([]*commonv1.KeyValue, 0, len(usage))
 	for _, entry := range usage {
 		if value, ok := attrs.int(entry.source); ok {
-			pending.span.Attributes = append(pending.span.Attributes, intAttr(entry.key, value))
+			counted = append(counted, intAttr(entry.key, value))
 		}
 	}
+	// Codex completes a response twice: once to end the stream, and again
+	// carrying the counts. Taking the call on the first would spend it on the
+	// record that has nothing to add and leave the counts nowhere to land.
+	if len(counted) == 0 {
+		return nil
+	}
+	pending := p.takeLLMCall(attrs.str("conversation.id"))
+	if pending == nil {
+		return nil
+	}
+	pending.span.Attributes = append(pending.span.Attributes, counted...)
 	return pending.span
+}
+
+func (p *Proxy) rememberMessage(conversationID string, span *tracev1.Span) {
+	if conversationID == "" {
+		return
+	}
+	p.llmCallMu.Lock()
+	defer p.llmCallMu.Unlock()
+	if p.messageSpans == nil {
+		p.messageSpans = make(map[string]*tracev1.Span, 1)
+	}
+	p.messageSpans[conversationID] = span
+}
+
+func (p *Proxy) messageSpanFor(conversationID string) *tracev1.Span {
+	if conversationID == "" {
+		return nil
+	}
+	p.llmCallMu.Lock()
+	defer p.llmCallMu.Unlock()
+	return p.messageSpans[conversationID]
 }
 
 func (p *Proxy) rememberLLMCall(conversationID string, span *tracev1.Span) {
