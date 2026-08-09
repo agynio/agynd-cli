@@ -177,8 +177,10 @@ func New(ctx context.Context, cfg config.Config, version string) (*Daemon, error
 // prepareAgentCLI writes what the agent CLI needs on disk before anything runs
 // it -- in holder mode too, where nothing will except a person, by hand.
 func prepareAgentCLI(cfg config.Config) error {
-	if err := writePlaceholderFile(); err != nil {
-		return fmt.Errorf("write placeholder credential: %w", err)
+	// Which credential a CLI needs on disk follows from the CLI, so it is
+	// derived here rather than delivered: only this knows which one it runs.
+	if cfg.SDK == SDKCodex && cfg.LLMNative {
+		return writeCodexAuth(time.Now())
 	}
 	if cfg.SDK != SDKClaude {
 		return nil

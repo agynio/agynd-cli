@@ -82,22 +82,36 @@ func TestAgentModePreparesStateButDefersSettings(t *testing.T) {
 	}
 }
 
-// Codex reads a placeholder credential from a file, not a first-run flag.
-func TestPrepareWritesThePlaceholderForEveryCLI(t *testing.T) {
+// A native-mode codex gets its auth file from the CLI it is, not from anything
+// the platform relays.
+func TestPrepareWritesCodexAuthInNativeMode(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv(placeholderFilePathEnv, ".codex/auth.json")
-	t.Setenv(placeholderFileContentsEnv, "placeholder")
 
-	cfg := config.Config{Mode: config.ModeHolder, SDK: SDKCodex, WorkDir: t.TempDir()}
+	cfg := config.Config{Mode: config.ModeHolder, SDK: SDKCodex, LLMNative: true, WorkDir: t.TempDir()}
 	if err := prepareAgentCLI(cfg); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
 
 	if _, err := os.Stat(filepath.Join(home, ".codex", "auth.json")); err != nil {
-		t.Fatalf("placeholder not written: %v", err)
+		t.Fatalf("codex auth not written: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(home, claudeStateFileName)); !os.IsNotExist(err) {
 		t.Fatalf("wrote Claude state for a Codex workload: %v", err)
+	}
+}
+
+// Platform mode routes through the proxy by a platform model, and codex holds a
+// real platform credential -- there is no subscription to stand in for.
+func TestPrepareSkipsCodexAuthInPlatformMode(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cfg := config.Config{Mode: config.ModeHolder, SDK: SDKCodex, WorkDir: t.TempDir()}
+	if err := prepareAgentCLI(cfg); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".codex", "auth.json")); !os.IsNotExist(err) {
+		t.Fatalf("wrote auth.json in platform mode: %v", err)
 	}
 }
