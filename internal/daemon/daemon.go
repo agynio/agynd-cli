@@ -1180,7 +1180,6 @@ func codexModel(cfg config.Config, platformModel string) string {
 
 type codexThreadDefaults struct {
 	model                 *string
-	baseInstructions      *string
 	developerInstructions *string
 	cwd                   *string
 }
@@ -1190,11 +1189,16 @@ func (d *Daemon) codexThreadDefaults() codexThreadDefaults {
 	if model := codexModel(d.cfg, d.agent.GetModel()); model != "" {
 		defaults.model = &model
 	}
-	if role := strings.TrimSpace(d.agent.GetRole()); role != "" {
-		defaults.baseInstructions = &role
-	}
-	if config := strings.TrimSpace(d.agent.GetConfiguration()); config != "" {
-		defaults.developerInstructions = &config
+	// The system prompt is the agent's own, and it is layered on codex's rather
+	// than replacing it: base instructions carry the CLI's operating
+	// instructions, and an agent that overwrites them loses how to use its own
+	// tools. The role is an internal label and is not shown to the model.
+	if config, err := parseAgentConfiguration(d.agent.GetConfiguration()); err == nil {
+		if prompt := strings.TrimSpace(config.SystemPrompt); prompt != "" {
+			defaults.developerInstructions = &prompt
+		}
+	} else {
+		log.Printf("agent configuration: %v; starting without a system prompt", err)
 	}
 	if d.cfg.WorkDir != "" {
 		workDir := d.cfg.WorkDir
@@ -1207,7 +1211,6 @@ func (d *Daemon) resumeCodexThread(ctx context.Context, codexThreadID string) er
 	params := &codex.ThreadResumeParams{ThreadID: codexThreadID}
 	defaults := d.codexThreadDefaults()
 	params.Model = defaults.model
-	params.BaseInstructions = defaults.baseInstructions
 	params.DeveloperInstructions = defaults.developerInstructions
 	params.Cwd = defaults.cwd
 	resp, err := d.codex.ResumeThread(ctx, params)
@@ -1228,7 +1231,6 @@ func (d *Daemon) startCodexThread(ctx context.Context) (string, error) {
 	params := &codex.ThreadStartParams{}
 	defaults := d.codexThreadDefaults()
 	params.Model = defaults.model
-	params.BaseInstructions = defaults.baseInstructions
 	params.DeveloperInstructions = defaults.developerInstructions
 	params.Cwd = defaults.cwd
 	ephemeral := false
