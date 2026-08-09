@@ -1193,9 +1193,9 @@ func codexModel(cfg config.Config, platformModel string) string {
 }
 
 type codexThreadDefaults struct {
-	model                 *string
-	developerInstructions *string
-	cwd                   *string
+	model            *string
+	baseInstructions *string
+	cwd              *string
 }
 
 func (d *Daemon) codexThreadDefaults() codexThreadDefaults {
@@ -1203,13 +1203,14 @@ func (d *Daemon) codexThreadDefaults() codexThreadDefaults {
 	if model := codexModel(d.cfg, d.agent.GetModel()); model != "" {
 		defaults.model = &model
 	}
-	// The system prompt is the agent's own, and it is layered on codex's rather
-	// than replacing it: base instructions carry the CLI's operating
-	// instructions, and an agent that overwrites them loses how to use its own
-	// tools. The role is an internal label and is not shown to the model.
+	// The agent's system prompt is the system prompt: it is sent as the base
+	// instructions, which codex renders in place of its own rather than
+	// alongside them. An agent that needs the CLI's operating instructions has
+	// to carry them in its own prompt. The role is an internal label and is
+	// never shown to the model.
 	if config, err := parseAgentConfiguration(d.agent.GetConfiguration()); err == nil {
 		if prompt := strings.TrimSpace(config.SystemPrompt); prompt != "" {
-			defaults.developerInstructions = &prompt
+			defaults.baseInstructions = &prompt
 		}
 	} else {
 		log.Printf("agent configuration: %v; starting without a system prompt", err)
@@ -1225,7 +1226,7 @@ func (d *Daemon) resumeCodexThread(ctx context.Context, codexThreadID string) er
 	params := &codex.ThreadResumeParams{ThreadID: codexThreadID}
 	defaults := d.codexThreadDefaults()
 	params.Model = defaults.model
-	params.DeveloperInstructions = defaults.developerInstructions
+	params.BaseInstructions = defaults.baseInstructions
 	params.Cwd = defaults.cwd
 	resp, err := d.codex.ResumeThread(ctx, params)
 	if err != nil {
@@ -1245,7 +1246,7 @@ func (d *Daemon) startCodexThread(ctx context.Context) (string, error) {
 	params := &codex.ThreadStartParams{}
 	defaults := d.codexThreadDefaults()
 	params.Model = defaults.model
-	params.DeveloperInstructions = defaults.developerInstructions
+	params.BaseInstructions = defaults.baseInstructions
 	params.Cwd = defaults.cwd
 	ephemeral := false
 	params.Ephemeral = &ephemeral
