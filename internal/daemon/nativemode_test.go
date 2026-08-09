@@ -80,14 +80,14 @@ func TestCodexConfigNativeOmitsProvider(t *testing.T) {
 		LLMNative:  true,
 		MCPServers: []config.MCPServer{{Name: "platform", Port: 9100}},
 	}
-	payload := codexConfig(cfg, "http://127.0.0.1:4318/v1/traces")
+	payload := codexConfig(cfg)
 
 	for _, forbidden := range []string{"model_provider", "base_url", "llm-proxy.ziti", "env_key"} {
 		if strings.Contains(payload, forbidden) {
 			t.Fatalf("native codex config carries %q:\n%s", forbidden, payload)
 		}
 	}
-	for _, required := range []string{"[mcp_servers.platform]", "approval_policy", "[otel]"} {
+	for _, required := range []string{"[mcp_servers.platform]", "approval_policy", "[[hooks.Stop]]"} {
 		if !strings.Contains(payload, required) {
 			t.Fatalf("native codex config lost %q:\n%s", required, payload)
 		}
@@ -96,7 +96,7 @@ func TestCodexConfigNativeOmitsProvider(t *testing.T) {
 
 func TestCodexEnvNativeKeepsPlaceholder(t *testing.T) {
 	cfg := config.Config{LLMBaseURL: "http://llm-proxy.ziti:443/v1", LLMNative: true, LLMAPIToken: "platform"}
-	env := codexEnv(cfg, "/home/agent/.codex", "/home/agent", "http://127.0.0.1:4318")
+	env := codexEnv(cfg, "/home/agent/.codex", "/home/agent")
 
 	// The placeholder codex reads is on the container; overwriting the variable
 	// here with a platform token would replace it with something the proxy does

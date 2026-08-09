@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"net/url"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/agynio/agynd-cli/internal/config"
+	"github.com/agynio/agynd-cli/internal/tracing"
 	codex "github.com/agynio/codex-sdk-go"
 )
 
@@ -18,32 +20,34 @@ import (
 // vendor. Tracing and the mcp_servers appended below are unaffected.
 const codexNativeConfigTemplate = `approval_policy = "never"
 sandbox_mode = "danger-full-access"
+` + codexHookTemplate
 
-[otel]
-# See the platform template for why this is OTLP/HTTP rather than gRPC, and why
-# prompts ship over logs rather than traces.
-trace_exporter = { otlp-http = { endpoint = %q, protocol = "binary" } }
-exporter = { otlp-http = { endpoint = %q, protocol = "binary" } }
-log_user_prompt = true
-metrics_exporter = "none"
+// traceHookCommand is the platform's trace hook, delivered to /agyn/bin beside
+// agynd and reached by name because that directory is on the agent's PATH.
+const (
+	traceHookCommand     = "agynd-trace-hook"
+	traceHookFormatEnv   = "AGYN_TRACE_FORMAT"
+	traceHookAddressEnv  = "TRACING_ADDRESS"
+	traceHookTraceEnv    = "AGYN_TRACE_ID"
+	traceHookWorkloadEnv = "WORKLOAD_ID"
+
+	traceFormatCodex  = "codex"
+	traceFormatClaude = "claude"
+)
+
+// codexHookTemplate runs the platform's trace hook when a turn completes.
+// Codex hands it the rollout path, which is the record of what the turn
+// actually did -- its telemetry reports only that a call happened.
+const codexHookTemplate = `
+[[hooks.Stop]]
+[[hooks.Stop.hooks]]
+type = "command"
+command = "` + traceHookCommand + `"
 `
 
 const codexConfigTemplate = `model_provider = "platform"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
-
-[otel]
-# OTLP/HTTP, not gRPC: codex's otlp-grpc exporter fails to build at all in the
-# version shipped in the init image -- it reports "error loading otel config:
-# transport error" against any address, a live listener or a closed port alike --
-# and codex then exits before answering the initialize handshake. protocol is
-# required and binary is the OTLP default encoding.
-trace_exporter = { otlp-http = { endpoint = %q, protocol = "binary" } }
-# Prompts, tool calls and SSE events ship over logs, not traces; log_user_prompt
-# is the opt-in that stops codex reducing the prompt to prompt_length.
-exporter = { otlp-http = { endpoint = %q, protocol = "binary" } }
-log_user_prompt = true
-metrics_exporter = "none"
 
 [model_providers.platform]
 name = "Agyn LLM"
@@ -52,7 +56,7 @@ base_url = %q
 request_max_retries = 0
 stream_max_retries = 0
 supports_websockets = false
-`
+` + codexHookTemplate
 
 const codexAPIKeyEnv = `env_key = "OPENAI_API_KEY"
 `
@@ -60,21 +64,20 @@ const codexAPIKeyEnv = `env_key = "OPENAI_API_KEY"
 const zitiHostnameSuffix = ".ziti"
 
 const (
-	codexEnvPath                     = "PATH"
-	codexEnvHome                     = "HOME"
-	codexEnvCodexHome                = "CODEX_HOME"
-	codexEnvOpenAIAPIKey             = "OPENAI_API_KEY"
-	codexEnvCodexAPIKey              = "CODEX_API_KEY"
-	codexEnvCodexAccessToken         = "CODEX_ACCESS_TOKEN"
-	codexEnvOTELExporterOTLPEndpoint = "OTEL_EXPORTER_OTLP_ENDPOINT"
-	codexEnvNoProxy                  = "NO_PROXY"
-	codexEnvNoProxyLower             = "no_proxy"
-	codexEnvHTTPProxy                = "HTTP_PROXY"
-	codexEnvHTTPProxyLower           = "http_proxy"
-	codexEnvHTTPSProxy               = "HTTPS_PROXY"
-	codexEnvHTTPSProxyLower          = "https_proxy"
-	codexEnvAllProxy                 = "ALL_PROXY"
-	codexEnvAllProxyLower            = "all_proxy"
+	codexEnvPath             = "PATH"
+	codexEnvHome             = "HOME"
+	codexEnvCodexHome        = "CODEX_HOME"
+	codexEnvOpenAIAPIKey     = "OPENAI_API_KEY"
+	codexEnvCodexAPIKey      = "CODEX_API_KEY"
+	codexEnvCodexAccessToken = "CODEX_ACCESS_TOKEN"
+	codexEnvNoProxy          = "NO_PROXY"
+	codexEnvNoProxyLower     = "no_proxy"
+	codexEnvHTTPProxy        = "HTTP_PROXY"
+	codexEnvHTTPProxyLower   = "http_proxy"
+	codexEnvHTTPSProxy       = "HTTPS_PROXY"
+	codexEnvHTTPSProxyLower  = "https_proxy"
+	codexEnvAllProxy         = "ALL_PROXY"
+	codexEnvAllProxyLower    = "all_proxy"
 )
 
 var codexZitiNoProxyHosts = []string{
@@ -101,39 +104,31 @@ var codexProxyEnvVars = []string{
 	codexEnvAllProxyLower,
 }
 
-func writeCodexConfig(cfg config.Config, otlpEndpoint string) (string, error) {
+func writeCodexConfig(cfg config.Config) (string, error) {
 	codexHome := filepath.Join(codexHomeEnv(), ".codex")
 	if err := os.MkdirAll(codexHome, 0o700); err != nil {
 		return "", fmt.Errorf("create codex home dir: %w", err)
 	}
 	configPath := filepath.Join(codexHome, "config.toml")
-	payload := codexConfig(cfg, otlpEndpoint)
+	payload := codexConfig(cfg)
 	if err := os.WriteFile(configPath, []byte(payload), 0o600); err != nil {
 		return "", fmt.Errorf("write codex config: %w", err)
 	}
 	return codexHome, nil
 }
 
-// Codex wants a per-signal URL, not a base, so the caller passes the collector
-// root and the signal path is appended here.
-func otlpSignalEndpoint(otlpEndpoint, signal string) string {
-	return strings.TrimSuffix(otlpEndpoint, "/") + "/v1/" + signal
-}
-
-func codexPlatformConfig(llmBaseURL, otlpEndpoint string) string {
+func codexPlatformConfig(llmBaseURL string) string {
 	apiKeyEnv := codexAPIKeyEnv
 	if isZitiLLMBaseURL(llmBaseURL) {
 		apiKeyEnv = ""
 	}
-	return fmt.Sprintf(codexConfigTemplate, otlpSignalEndpoint(otlpEndpoint, "traces"),
-		otlpSignalEndpoint(otlpEndpoint, "logs"), llmBaseURL, apiKeyEnv)
+	return fmt.Sprintf(codexConfigTemplate, llmBaseURL, apiKeyEnv)
 }
 
-func codexConfig(cfg config.Config, otlpEndpoint string) string {
-	payload := codexPlatformConfig(cfg.LLMBaseURL, otlpEndpoint)
+func codexConfig(cfg config.Config) string {
+	payload := codexPlatformConfig(cfg.LLMBaseURL)
 	if cfg.LLMNative {
-		payload = fmt.Sprintf(codexNativeConfigTemplate,
-			otlpSignalEndpoint(otlpEndpoint, "traces"), otlpSignalEndpoint(otlpEndpoint, "logs"))
+		payload = codexNativeConfigTemplate
 	}
 	mcpServers := cfg.MCPServers
 	if len(mcpServers) == 0 {
@@ -148,13 +143,18 @@ func codexConfig(cfg config.Config, otlpEndpoint string) string {
 	return builder.String()
 }
 
-
-func codexEnv(cfg config.Config, codexHome, codexHomeValue, otlpEndpoint string) map[string]string {
+func codexEnv(cfg config.Config, codexHome, codexHomeValue string) map[string]string {
 	env := map[string]string{
-		codexEnvPath:                     agentPathValue(),
-		codexEnvCodexHome:                codexHome,
-		codexEnvHome:                     codexHomeValue,
-		codexEnvOTELExporterOTLPEndpoint: otlpEndpoint,
+		codexEnvPath:      agentPathValue(),
+		codexEnvCodexHome: codexHome,
+		codexEnvHome:      codexHomeValue,
+		// The hook is told which transcript it is being handed rather than
+		// sniffing the file, where to export what it reads, and which trace to
+		// write into -- the one agynd opened for this wake cycle.
+		traceHookFormatEnv:   traceFormatCodex,
+		traceHookAddressEnv:  cfg.TracingAddress,
+		traceHookTraceEnv:    traceHookTraceID(cfg.WorkloadID),
+		traceHookWorkloadEnv: cfg.WorkloadID,
 	}
 	// Native mode carries no platform credential at all: the placeholder codex
 	// reads is on the container, and the proxy replaces it upstream.
@@ -172,6 +172,12 @@ func codexEnv(cfg config.Config, codexHome, codexHomeValue, otlpEndpoint string)
 		env[codexEnvOpenAIAPIKey] = cfg.LLMAPIToken
 	}
 	return env
+}
+
+// The hook is handed the trace as hex rather than the workload it came from,
+// so agynd stays the one that decides what a trace is.
+func traceHookTraceID(workloadID string) string {
+	return hex.EncodeToString(tracing.TraceID(workloadID))
 }
 
 func zitiNoProxyValue(values ...string) string {

@@ -24,7 +24,7 @@ import (
 	"github.com/agynio/agynd-cli/internal/config"
 	"github.com/agynio/agynd-cli/internal/platform"
 	"github.com/agynio/agynd-cli/internal/subscriber"
-	"github.com/agynio/agynd-cli/internal/tracingproxy"
+	"github.com/agynio/agynd-cli/internal/tracing"
 	claude "github.com/agynio/claude-sdk-go"
 	codex "github.com/agynio/codex-sdk-go"
 	"github.com/google/uuid"
@@ -57,7 +57,6 @@ const (
 	opAgnTurn                 = "agn_turn"
 	opClaudeTurn              = "claude_turn"
 	opProcessSignalShutdown   = "process_signal/shutdown"
-	tracingProxyListenAddress = "127.0.0.1:0"
 	mcpLoopbackHost           = "127.0.0.1"
 )
 
@@ -97,7 +96,7 @@ type Daemon struct {
 	agn           *agnsdk.Client
 	claude        claudeClient
 	agent         *agentsv1.Agent
-	tracingProxy  *tracingproxy.Proxy
+	tracing       *tracing.Exporter
 	claudeReadyMu sync.Mutex
 	claudeReady   bool
 	mcpReadyMu    sync.Mutex
@@ -329,30 +328,26 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 	bridge := codexbridge.New(tracker)
 	threadsMapping := codexbridge.NewThreadMapping()
 
-	tracingProxy, err := tracingproxy.Start(ctx, tracingproxy.Config{
-		TracingAddress: cfg.TracingAddress,
-		ListenAddress:  tracingProxyListenAddress,
-		ThreadID:       cfg.ThreadID,
-		WorkloadID:     cfg.WorkloadID,
+	// What the platform hands the agent CLI is exported here; what the CLI
+	// did with it is exported by the trace hook, into the trace both derive
+	// from the workload.
+	tracingExporter, err := tracing.NewExporter(tracing.Config{
+		Address:    cfg.TracingAddress,
+		WorkloadID: cfg.WorkloadID,
 	})
 	if err != nil {
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}
-	otlpEndpoint := "http://" + tracingProxy.Address()
-	// Codex exports over OTLP/HTTP and everything else over gRPC; see the otel
-	// block in the codex config for why.
-	// The collector root: codex wants a per-signal URL, appended per exporter.
-	codexOTLPEndpoint := "http://" + tracingProxy.HTTPAddress()
-	codexHome, err := writeCodexConfig(cfg, codexOTLPEndpoint)
+	codexHome, err := writeCodexConfig(cfg)
 	if err != nil {
-		tracingProxy.Close()
+		_ = tracingExporter.Close()
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}
 
 	if err := runInitScripts(ctx, setup.agents, cfg.AgentID.String(), cfg.EnvironmentID, cfg.WorkDir); err != nil {
-		tracingProxy.Close()
+		_ = tracingExporter.Close()
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}
@@ -361,7 +356,7 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 	options := []codex.Option{
 		codex.WithBinary(cfg.AgentBinary),
 		codex.WithWorkDir(cfg.WorkDir),
-		codex.WithEnv(codexEnv(cfg, codexHome, codexHomeValue, otlpEndpoint)),
+		codex.WithEnv(codexEnv(cfg, codexHome, codexHomeValue)),
 		codex.WithNotificationHandler(bridge),
 		codex.WithApprovalHandler(codex.AutoApprovalHandler{}),
 		codex.WithClientInfo("agynd", version),
@@ -375,7 +370,7 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 	cancelCodex()
 	if err != nil {
 		log.Printf("start codex: %v", err)
-		tracingProxy.Close()
+		_ = tracingExporter.Close()
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}
@@ -395,7 +390,7 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 		mappingStore: mappingStore,
 		tracker:      tracker,
 		agent:        setup.agent,
-		tracingProxy: tracingProxy,
+		tracing:      tracingExporter,
 	}, nil
 }
 
@@ -409,8 +404,8 @@ func (d *Daemon) Close() {
 	if d.claude != nil {
 		_ = d.claude.Close()
 	}
-	if d.tracingProxy != nil {
-		d.tracingProxy.Close()
+	if d.tracing != nil {
+		_ = d.tracing.Close()
 	}
 	if d.gatewayConn != nil {
 		_ = d.gatewayConn.Close()
@@ -702,12 +697,7 @@ func (d *Daemon) syncMessages(ctx context.Context) error {
 
 	participantID := d.selfID()
 	if err := d.consumer.Sync(ctx, participantID, d.cfg.ThreadID, func(message platform.Message) error {
-		if d.tracingProxy != nil {
-			// The thread varies per message once the daemon serves an inbox,
-			// so it is stamped here rather than once at startup.
-			d.tracingProxy.SetThreadID(message.ThreadID)
-			d.tracingProxy.SetMessageID(message.ID)
-		}
+		d.recordInvocation(ctx, message)
 		if err := d.ensureMCPReady(ctx); err != nil {
 			return fmt.Errorf("wait for MCP servers before processing message %s: %w", message.ID, err)
 		}
@@ -1280,4 +1270,23 @@ func messageHeader(message platform.Message) string {
 	}
 	header.WriteString("---\n")
 	return header.String()
+}
+
+// recordInvocation exports the message that opened this turn. Tracing is an
+// optional dependency, so a failure is reported and the turn proceeds -- an
+// unreachable Tracing service must not cost the agent a message.
+func (d *Daemon) recordInvocation(ctx context.Context, message platform.Message) {
+	if d.tracing == nil {
+		return
+	}
+	err := d.tracing.InvocationMessage(ctx, tracing.Message{
+		ID:        message.ID,
+		ThreadID:  message.ThreadID,
+		SenderID:  message.SenderID,
+		Body:      message.Body,
+		CreatedAt: message.CreatedAt,
+	})
+	if err != nil {
+		log.Printf("tracing: record invocation for message %s: %v", message.ID, err)
+	}
 }

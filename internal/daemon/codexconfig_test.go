@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/agynio/agynd-cli/internal/config"
+	"github.com/agynio/agynd-cli/internal/tracing"
 	codex "github.com/agynio/codex-sdk-go"
 )
 
@@ -34,14 +36,12 @@ func (noopCodexClient) Close() error {
 	return nil
 }
 
-const testCodexOTLPEndpoint = "http://127.0.0.1:54321"
-
 func TestWriteCodexConfig(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 
 	baseURL := "https://example.com"
-	codexHome, err := writeCodexConfig(config.Config{LLMBaseURL: baseURL, MCPServers: nil}, testCodexOTLPEndpoint)
+	codexHome, err := writeCodexConfig(config.Config{LLMBaseURL: baseURL, MCPServers: nil})
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
@@ -67,7 +67,7 @@ func TestWriteCodexConfigHomeFallback(t *testing.T) {
 	t.Setenv("HOME", "")
 
 	baseURL := "https://example.com"
-	codexHome, err := writeCodexConfig(config.Config{LLMBaseURL: baseURL, MCPServers: nil}, testCodexOTLPEndpoint)
+	codexHome, err := writeCodexConfig(config.Config{LLMBaseURL: baseURL, MCPServers: nil})
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
@@ -94,7 +94,7 @@ func TestWriteCodexConfigForZitiOmitsAPIKeyEnv(t *testing.T) {
 	t.Setenv("HOME", tmpHome)
 
 	baseURL := "http://llm-proxy.ziti:443/v1"
-	codexHome, err := writeCodexConfig(config.Config{LLMBaseURL: baseURL, MCPServers: nil}, testCodexOTLPEndpoint)
+	codexHome, err := writeCodexConfig(config.Config{LLMBaseURL: baseURL, MCPServers: nil})
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
@@ -120,7 +120,7 @@ func TestWriteCodexConfigWithMCPServers(t *testing.T) {
 		{Name: "memory", Port: 8100},
 		{Name: "cache", Port: 8200},
 	}
-	codexHome, err := writeCodexConfig(config.Config{LLMBaseURL: baseURL, MCPServers: mcpServers}, testCodexOTLPEndpoint)
+	codexHome, err := writeCodexConfig(config.Config{LLMBaseURL: baseURL, MCPServers: mcpServers})
 	if err != nil {
 		t.Fatalf("expected config to be written, got %v", err)
 	}
@@ -157,7 +157,7 @@ func TestCodexEnvIncludesAPIKeyForPublicLLM(t *testing.T) {
 		LLMAPIToken: "token-123",
 	}
 
-	env := codexEnv(cfg, "/tmp/.codex", "/tmp", testCodexOTLPEndpoint)
+	env := codexEnv(cfg, "/tmp/.codex", "/tmp")
 
 	if env[codexEnvOpenAIAPIKey] != "token-123" {
 		t.Fatalf("expected API key in codex env, got %q", env[codexEnvOpenAIAPIKey])
@@ -174,7 +174,7 @@ func TestCodexEnvOmitsAPIKeyForZitiLLM(t *testing.T) {
 		LLMAPIToken: "user-token",
 	}
 
-	env := codexEnv(cfg, "/tmp/.codex", "/tmp", testCodexOTLPEndpoint)
+	env := codexEnv(cfg, "/tmp/.codex", "/tmp")
 
 	if _, ok := env[codexEnvOpenAIAPIKey]; ok {
 		t.Fatalf("expected ziti codex env to omit %s", codexEnvOpenAIAPIKey)
@@ -194,7 +194,7 @@ func TestCodexEnvMergesNoProxySpellingsForZitiLLM(t *testing.T) {
 	t.Setenv(codexEnvNoProxyLower, "127.0.0.1, localhost, gateway.ziti")
 	cfg := config.Config{LLMBaseURL: "http://llm-proxy.ziti:443/v1"}
 
-	env := codexEnv(cfg, "/tmp/.codex", "/tmp", testCodexOTLPEndpoint)
+	env := codexEnv(cfg, "/tmp/.codex", "/tmp")
 
 	want := "localhost,.ZITI,127.0.0.1,gateway.ziti,llm-proxy.ziti,tracing.ziti"
 	if env[codexEnvNoProxyLower] != env[codexEnvNoProxy] {
@@ -215,7 +215,7 @@ func TestCodexEnvClearsProxyVarsForZitiLLM(t *testing.T) {
 	}
 	cfg := config.Config{LLMBaseURL: "http://llm-proxy.ziti:443/v1"}
 
-	env := codexEnv(cfg, "/tmp/.codex", "/tmp", testCodexOTLPEndpoint)
+	env := codexEnv(cfg, "/tmp/.codex", "/tmp")
 
 	for _, key := range codexProxyEnvVars {
 		value, ok := env[key]
@@ -235,7 +235,7 @@ func TestCodexEnvDoesNotSetNoProxyForPublicLLM(t *testing.T) {
 		LLMAPIToken: "token-123",
 	}
 
-	env := codexEnv(cfg, "/tmp/.codex", "/tmp", testCodexOTLPEndpoint)
+	env := codexEnv(cfg, "/tmp/.codex", "/tmp")
 
 	if _, ok := env[codexEnvNoProxy]; ok {
 		t.Fatalf("expected public LLM env to omit %s", codexEnvNoProxy)
@@ -300,8 +300,8 @@ func TestZitiCodexProcessReceivesNoAuthEnvConfig(t *testing.T) {
 		LLMAPIToken: "agent-env-token",
 	}
 
-	env := codexEnv(cfg, "/tmp/.codex", "/tmp", testCodexOTLPEndpoint)
-	configPayload := codexConfig(config.Config{LLMBaseURL: cfg.LLMBaseURL, MCPServers: nil}, testCodexOTLPEndpoint)
+	env := codexEnv(cfg, "/tmp/.codex", "/tmp")
+	configPayload := codexConfig(config.Config{LLMBaseURL: cfg.LLMBaseURL, MCPServers: nil})
 	seenEnv := map[string]bool{}
 	_, err := withoutCodexAuthEnv(func() (codexClient, error) {
 		for _, key := range codexAuthEnvVars {
@@ -360,37 +360,35 @@ func assertCodexBaseEnv(t *testing.T, env map[string]string) {
 	if env[codexEnvHome] != "/tmp" {
 		t.Fatalf("expected HOME, got %q", env[codexEnvHome])
 	}
-	if env[codexEnvOTELExporterOTLPEndpoint] != testCodexOTLPEndpoint {
-		t.Fatalf("expected OTLP endpoint, got %q", env[codexEnvOTELExporterOTLPEndpoint])
+}
+
+// The hook writes into the trace agynd opened, so it has to be handed the same
+// one agynd is exporting the invocation message into.
+func TestCodexEnvCarriesTheTraceAgyndOpened(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin")
+	cfg := config.Config{LLMBaseURL: "https://llm.example/v1", WorkloadID: "workload-1"}
+
+	env := codexEnv(cfg, "/tmp/.codex", "/tmp")
+
+	want := hex.EncodeToString(tracing.TraceID("workload-1"))
+	if env[traceHookTraceEnv] != want {
+		t.Fatalf("expected %s %q, got %q", traceHookTraceEnv, want, env[traceHookTraceEnv])
 	}
 }
 
 func codexConfigWithAPIKey(baseURL string) string {
-	return codexConfigPayload(baseURL, testCodexOTLPEndpoint, `env_key = "OPENAI_API_KEY"
+	return codexConfigPayload(baseURL, `env_key = "OPENAI_API_KEY"
 `)
 }
 
 func codexConfigWithoutAPIKey(baseURL string) string {
-	return codexConfigPayload(baseURL, testCodexOTLPEndpoint, "")
+	return codexConfigPayload(baseURL, "")
 }
 
-func codexConfigPayload(baseURL, otlpEndpoint, apiKeyEnv string) string {
+func codexConfigPayload(baseURL, apiKeyEnv string) string {
 	return fmt.Sprintf(`model_provider = "platform"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
-
-[otel]
-# OTLP/HTTP, not gRPC: codex's otlp-grpc exporter fails to build at all in the
-# version shipped in the init image -- it reports "error loading otel config:
-# transport error" against any address, a live listener or a closed port alike --
-# and codex then exits before answering the initialize handshake. protocol is
-# required and binary is the OTLP default encoding.
-trace_exporter = { otlp-http = { endpoint = %q, protocol = "binary" } }
-# Prompts, tool calls and SSE events ship over logs, not traces; log_user_prompt
-# is the opt-in that stops codex reducing the prompt to prompt_length.
-exporter = { otlp-http = { endpoint = %q, protocol = "binary" } }
-log_user_prompt = true
-metrics_exporter = "none"
 
 [model_providers.platform]
 name = "Agyn LLM"
@@ -399,5 +397,5 @@ base_url = %q
 request_max_retries = 0
 stream_max_retries = 0
 supports_websockets = false
-`, otlpEndpoint+"/v1/traces", otlpEndpoint+"/v1/logs", baseURL, apiKeyEnv)
+`+codexHookTemplate, baseURL, apiKeyEnv)
 }
