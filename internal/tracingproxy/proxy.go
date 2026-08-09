@@ -8,9 +8,11 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
+	collectorlogsv1 "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	collectortracev1 "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	commonv1 "go.opentelemetry.io/proto/otlp/common/v1"
 	resourcev1 "go.opentelemetry.io/proto/otlp/resource/v1"
@@ -29,6 +31,7 @@ const (
 	messageIDAttributeKey  = "agyn.thread.message.id"
 	workloadIDAttributeKey = "agyn.workload.id"
 	maxHTTPExportBytes     = 32 << 20
+	maxLoggedValueBytes    = 400
 )
 
 type Config struct {
@@ -104,6 +107,7 @@ func Start(ctx context.Context, cfg Config) (*Proxy, error) {
 	proxy.httpAddress = httpListener.Addr().String()
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/traces", proxy.serveHTTPTraces)
+	mux.HandleFunc("POST /v1/logs", proxy.serveHTTPLogs)
 	proxy.httpServer = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if err := proxy.httpServer.Serve(httpListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -151,11 +155,65 @@ func (p *Proxy) serveHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(encoded)
 }
 
+// serveHTTPLogs records what codex ships over the log signal -- prompts, tool
+// calls and SSE events -- which has no ingest path yet, so it is logged and
+// acknowledged rather than forwarded.
+func (p *Proxy) serveHTTPLogs(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxHTTPExportBytes))
+	if err != nil {
+		http.Error(w, "read body", http.StatusBadRequest)
+		return
+	}
+	request := &collectorlogsv1.ExportLogsServiceRequest{}
+	if err := proto.Unmarshal(body, request); err != nil {
+		http.Error(w, "decode OTLP request", http.StatusBadRequest)
+		return
+	}
+	logExportedRecords(request)
+	encoded, err := proto.Marshal(&collectorlogsv1.ExportLogsServiceResponse{})
+	if err != nil {
+		http.Error(w, "encode OTLP response", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-protobuf")
+	_, _ = w.Write(encoded)
+}
+
+func logExportedRecords(request *collectorlogsv1.ExportLogsServiceRequest) {
+	for _, resourceLogs := range request.ResourceLogs {
+		for _, scopeLogs := range resourceLogs.ScopeLogs {
+			scope := ""
+			if scopeLogs.Scope != nil {
+				scope = scopeLogs.Scope.Name
+			}
+			for _, record := range scopeLogs.LogRecords {
+				attrs := make([]string, 0, len(record.Attributes))
+				for _, attr := range record.Attributes {
+					attrs = append(attrs, attr.Key+"="+truncateValue(attr.Value))
+				}
+				log.Printf("otlp log: scope=%s severity=%s body=%s attrs={%s}",
+					scope, record.SeverityText, truncateValue(record.Body), strings.Join(attrs, " "))
+			}
+		}
+	}
+}
+
+func truncateValue(value *commonv1.AnyValue) string {
+	if value == nil {
+		return ""
+	}
+	rendered := strings.ReplaceAll(value.String(), "\n", "\\n")
+	if len(rendered) > maxLoggedValueBytes {
+		return rendered[:maxLoggedValueBytes] + "..."
+	}
+	return rendered
+}
+
 func (p *Proxy) Address() string {
 	return p.address
 }
 
-// HTTPAddress is the OTLP/HTTP endpoint; append /v1/traces for the exporter.
+// HTTPAddress is the OTLP/HTTP collector root; callers append the signal path.
 func (p *Proxy) HTTPAddress() string {
 	return p.httpAddress
 }

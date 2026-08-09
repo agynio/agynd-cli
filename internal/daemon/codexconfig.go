@@ -24,8 +24,11 @@ sandbox_mode = "danger-full-access"
 # and codex then exits before answering the initialize handshake. protocol is
 # required and binary is the OTLP default encoding.
 trace_exporter = { otlp-http = { endpoint = %q, protocol = "binary" } }
+# Prompts, tool calls and SSE events ship over logs, not traces; log_user_prompt
+# is the opt-in that stops codex reducing the prompt to prompt_length.
+exporter = { otlp-http = { endpoint = %q, protocol = "binary" } }
+log_user_prompt = true
 metrics_exporter = "none"
-exporter = "none"
 
 [model_providers.platform]
 name = "Agyn LLM"
@@ -96,12 +99,19 @@ func writeCodexConfig(llmBaseURL string, mcpServers []config.MCPServer, otlpEndp
 	return codexHome, nil
 }
 
+// Codex wants a per-signal URL, not a base, so the caller passes the collector
+// root and the signal path is appended here.
+func otlpSignalEndpoint(otlpEndpoint, signal string) string {
+	return strings.TrimSuffix(otlpEndpoint, "/") + "/v1/" + signal
+}
+
 func codexConfig(llmBaseURL string, mcpServers []config.MCPServer, otlpEndpoint string) string {
 	apiKeyEnv := codexAPIKeyEnv
 	if isZitiLLMBaseURL(llmBaseURL) {
 		apiKeyEnv = ""
 	}
-	payload := fmt.Sprintf(codexConfigTemplate, otlpEndpoint, llmBaseURL, apiKeyEnv)
+	payload := fmt.Sprintf(codexConfigTemplate, otlpSignalEndpoint(otlpEndpoint, "traces"),
+		otlpSignalEndpoint(otlpEndpoint, "logs"), llmBaseURL, apiKeyEnv)
 	if len(mcpServers) == 0 {
 		return payload
 	}
