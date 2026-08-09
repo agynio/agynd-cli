@@ -313,7 +313,7 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 	otlpEndpoint := "http://" + tracingProxy.Address()
 	// Codex exports over OTLP/HTTP and everything else over gRPC; see the otel
 	// block in the codex config for why.
-	codexOTLPEndpoint := "http://" + tracingProxy.HTTPAddress() + "/v1/traces"
+	codexOTLPEndpoint := "http://" + tracingProxy.HTTPAddress()
 	codexHome, err := writeCodexConfig(cfg.LLMBaseURL, cfg.MCPServers, codexOTLPEndpoint)
 	if err != nil {
 		tracingProxy.Close()
