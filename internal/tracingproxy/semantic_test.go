@@ -121,6 +121,16 @@ func TestSemanticSpansAttachesUsageToTheCall(t *testing.T) {
 		t.Fatalf("expected the call span, got %d", len(call))
 	}
 
+	// Codex completes the response twice; only the second carries counts, and
+	// the first must not spend the pending call.
+	if empty := proxy.semanticSpans(logExport(logRecord(
+		stringAttr("event.name", eventSSE),
+		stringAttr("event.kind", sseResponseCompleted),
+		stringAttr("conversation.id", "conv-1"),
+	))); len(empty) != 0 {
+		t.Fatalf("expected a completion with no counts to emit nothing, got %d", len(empty))
+	}
+
 	usage := proxy.semanticSpans(logExport(logRecord(
 		stringAttr("event.name", eventSSE),
 		stringAttr("event.kind", sseResponseCompleted),
@@ -186,5 +196,38 @@ func TestSemanticSpansGroupSpansByMessage(t *testing.T) {
 	}
 	if len(spans[0].TraceId) != 16 || len(spans[0].SpanId) != 8 {
 		t.Fatalf("expected OTLP id widths, got trace=%d span=%d", len(spans[0].TraceId), len(spans[0].SpanId))
+	}
+}
+
+// The call answers the message, so it hangs off it rather than relying on a
+// start derived by subtracting codex's reported duration.
+func TestSemanticSpansParentTheCallToItsMessage(t *testing.T) {
+	proxy := &Proxy{}
+	message := proxy.semanticSpans(logExport(logRecord(
+		stringAttr("event.name", eventUserPrompt),
+		stringAttr("prompt", "hello"),
+		stringAttr("conversation.id", "conv-1"),
+		stringAttr("event.timestamp", "2026-08-09T00:48:22.310Z"),
+	)))
+	if len(message) != 1 {
+		t.Fatalf("expected the message span, got %d", len(message))
+	}
+
+	// A duration long enough to place the call before the message it answers.
+	call := proxy.semanticSpans(logExport(logRecord(
+		stringAttr("event.name", eventAPIRequest),
+		stringAttr("model", "gpt-5.5"),
+		stringAttr("duration_ms", "5000"),
+		stringAttr("conversation.id", "conv-1"),
+		stringAttr("event.timestamp", "2026-08-09T00:48:23.889Z"),
+	)))
+	if len(call) != 1 {
+		t.Fatalf("expected the call span, got %d", len(call))
+	}
+	if string(call[0].ParentSpanId) != string(message[0].SpanId) {
+		t.Fatal("expected the call to hang off the message it answers")
+	}
+	if call[0].StartTimeUnixNano < message[0].StartTimeUnixNano {
+		t.Fatal("expected the call not to open before the message it answers")
 	}
 }
