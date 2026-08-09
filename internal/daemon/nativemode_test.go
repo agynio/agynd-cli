@@ -82,14 +82,23 @@ func TestCodexConfigNativeOmitsProvider(t *testing.T) {
 	}
 	payload := codexConfig(cfg)
 
-	for _, forbidden := range []string{"model_provider", "base_url", "llm-proxy.ziti", "env_key"} {
+	// No endpoint and no credential. The provider below names neither -- it
+	// only settles transport, and codex keeps addressing its own vendor.
+	for _, forbidden := range []string{"base_url", "llm-proxy.ziti", "env_key"} {
 		if strings.Contains(payload, forbidden) {
 			t.Fatalf("native codex config carries %q:\n%s", forbidden, payload)
 		}
 	}
 	// The hook lives in the system config, not this one -- it is the only layer
 	// codex trusts a hook from.
-	for _, required := range []string{"[mcp_servers.platform]", "approval_policy"} {
+	for _, required := range []string{
+		"[mcp_servers.platform]",
+		"approval_policy",
+		// Left on its default, codex opens a WebSocket the proxy cannot
+		// terminate and the vendor answers 404.
+		"supports_websockets = false",
+		"requires_openai_auth = true",
+	} {
 		if !strings.Contains(payload, required) {
 			t.Fatalf("native codex config lost %q:\n%s", required, payload)
 		}
