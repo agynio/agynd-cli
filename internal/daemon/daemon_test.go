@@ -940,3 +940,34 @@ func TestBuildInputPrefersTheSenderHandle(t *testing.T) {
 		t.Fatalf("unexpected input: %q", got)
 	}
 }
+
+// The role is an internal label -- 64 characters, often a single word. Sending
+// it as the model's instructions left the agent with that word and nothing
+// else, and overwrote the CLI's own operating instructions with it.
+func TestCodexThreadDefaultsTakeTheSystemPromptFromConfiguration(t *testing.T) {
+	daemon := &Daemon{agent: &agentsv1.Agent{
+		Role:          "support",
+		Configuration: `{"system_prompt":"you are support agent"}`,
+	}}
+
+	defaults := daemon.codexThreadDefaults()
+
+	if defaults.developerInstructions == nil {
+		t.Fatal("expected the configured system prompt to be sent")
+	}
+	if got := *defaults.developerInstructions; got != "you are support agent" {
+		t.Fatalf("expected the system prompt, got %q", got)
+	}
+}
+
+// An agent with no prompt configured runs on the CLI's own instructions rather
+// than on its role.
+func TestCodexThreadDefaultsSendNothingWithoutAPrompt(t *testing.T) {
+	daemon := &Daemon{agent: &agentsv1.Agent{Role: "support", Configuration: "{}"}}
+
+	defaults := daemon.codexThreadDefaults()
+
+	if defaults.developerInstructions != nil {
+		t.Fatalf("expected no instructions, got %q", *defaults.developerInstructions)
+	}
+}

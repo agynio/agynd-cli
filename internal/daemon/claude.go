@@ -76,8 +76,16 @@ func newClaudeDaemon(ctx context.Context, cfg config.Config, version string) (*D
 			)
 		}
 	}
-	if role := strings.TrimSpace(setup.agent.GetRole()); role != "" {
-		options.SystemPrompt = role
+	// The agent's own prompt, not its role: the role is an internal label and
+	// naming it here left the model with a single word for instructions.
+	agentConfig, err := parseAgentConfiguration(setup.agent.GetConfiguration())
+	if err != nil {
+		_ = tracingExporter.Close()
+		_ = setup.gatewayConn.Close()
+		return nil, err
+	}
+	if prompt := strings.TrimSpace(agentConfig.SystemPrompt); prompt != "" {
+		options.SystemPrompt = prompt
 	}
 	claudeClient, err := claude.Start(ctx, options)
 	if err != nil {
