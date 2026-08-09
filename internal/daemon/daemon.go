@@ -151,13 +151,11 @@ type platformSetup struct {
 }
 
 func New(ctx context.Context, cfg config.Config, version string) (*Daemon, error) {
+	if err := prepareAgentCLI(cfg); err != nil {
+		return nil, err
+	}
 	if cfg.Mode == config.ModeHolder {
 		return newHolderDaemon(cfg), nil
-	}
-	// Before any SDK is constructed: the CLI reads it at startup, and a shell
-	// exec'd into an agent workload finds it for the same reason holder does.
-	if err := writePlaceholderFile(); err != nil {
-		return nil, fmt.Errorf("write placeholder credential: %w", err)
 	}
 	switch cfg.SDK {
 	case SDKCodex:
@@ -175,6 +173,26 @@ func New(ctx context.Context, cfg config.Config, version string) (*Daemon, error
 	default:
 		return nil, fmt.Errorf("unknown sdk %q", cfg.SDK)
 	}
+}
+
+// prepareAgentCLI writes what the agent CLI needs on disk before anything runs
+// it -- in holder mode too, where nothing will except a person, by hand.
+func prepareAgentCLI(cfg config.Config) error {
+	if err := writePlaceholderFile(); err != nil {
+		return fmt.Errorf("write placeholder credential: %w", err)
+	}
+	if cfg.SDK != SDKClaude {
+		return nil
+	}
+	if err := writeClaudeState(); err != nil {
+		return err
+	}
+	// The agent path writes settings.json later instead, once the platform has
+	// resolved MCP ports into the config.
+	if cfg.Mode != config.ModeHolder {
+		return nil
+	}
+	return writeClaudeSettings(claudeBaseURL(cfg.LLMBaseURL), cfg.LLMAPIToken, cfg.MCPServers, cfg.LLMNative)
 }
 
 func newHolderDaemon(cfg config.Config) *Daemon {

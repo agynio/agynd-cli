@@ -80,7 +80,7 @@ func fromEnv(configPath string) (Config, error) {
 		return Config{}, err
 	}
 	if mode == ModeHolder {
-		return holderConfigFromEnv(), nil
+		return holderConfig(configPath)
 	}
 
 	agentID, err := uuidutil.ParseUUID(strings.TrimSpace(os.Getenv("AGENT_ID")), "AGENT_ID")
@@ -116,16 +116,7 @@ func fromEnv(configPath string) (Config, error) {
 		return Config{}, err
 	}
 	workloadID = workloadUUID.String()
-	llmBaseURL := strings.TrimSpace(os.Getenv("LLM_BASE_URL"))
-	if llmBaseURL == "" {
-		llmBaseURL = "http://llm-proxy.ziti:443/v1"
-	}
-	llmNative := strings.EqualFold(strings.TrimSpace(os.Getenv("LLM_MODE")), "native")
 	llmModelName := strings.TrimSpace(os.Getenv("LLM_MODEL_NAME"))
-	llmAPIToken := strings.TrimSpace(os.Getenv("LLM_API_TOKEN"))
-	if llmAPIToken == "" {
-		llmAPIToken = "platform"
-	}
 
 	mcpServers, err := parseMCPServers(os.Getenv("AGENT_MCP_SERVERS"))
 	if err != nil {
@@ -168,9 +159,9 @@ func fromEnv(configPath string) (Config, error) {
 		TracingAddress:  tracingAddress,
 		ThreadID:        threadID,
 		WorkloadID:      workloadID,
-		LLMBaseURL:      llmBaseURL,
-		LLMAPIToken:     llmAPIToken,
-		LLMNative:       llmNative,
+		LLMBaseURL:      llmBaseURLFromEnv(),
+		LLMAPIToken:     llmAPITokenFromEnv(),
+		LLMNative:       llmNativeFromEnv(),
 		LLMModelName:    llmModelName,
 		SDK:             sdk,
 		AgentBinary:     agentBinary,
@@ -193,16 +184,52 @@ func parseMode(raw string) (string, error) {
 	}
 }
 
-func holderConfigFromEnv() Config {
+// A sandbox prepares the agent CLI it will not spawn, so holder mode reads the
+// same LLM and MCP variables agent mode does.
+func holderConfig(configPath string) (Config, error) {
 	workDir := strings.TrimSpace(os.Getenv("WORKSPACE_DIR"))
 	if workDir == "" {
 		workDir = HolderDefaultWorkDir
 	}
-	return Config{
-		Mode:    ModeHolder,
-		SDK:     ModeHolder,
-		WorkDir: workDir,
+	mcpServers, err := parseMCPServers(os.Getenv("AGENT_MCP_SERVERS"))
+	if err != nil {
+		return Config{}, err
 	}
+	cfg := Config{
+		Mode:        ModeHolder,
+		SDK:         ModeHolder,
+		WorkDir:     workDir,
+		LLMBaseURL:  llmBaseURLFromEnv(),
+		LLMAPIToken: llmAPITokenFromEnv(),
+		LLMNative:   llmNativeFromEnv(),
+		MCPServers:  mcpServers,
+	}
+	// A workspace-only environment carries no CLI and so no config.json. There
+	// is nothing to prepare, which is not a failure.
+	if agentCfg, err := loadAgentConfig(configPath); err == nil {
+		if sdk := strings.TrimSpace(agentCfg.SDK); sdk != "" {
+			cfg.SDK = sdk
+		}
+	}
+	return cfg, nil
+}
+
+func llmBaseURLFromEnv() string {
+	if llmBaseURL := strings.TrimSpace(os.Getenv("LLM_BASE_URL")); llmBaseURL != "" {
+		return llmBaseURL
+	}
+	return "http://llm-proxy.ziti:443/v1"
+}
+
+func llmAPITokenFromEnv() string {
+	if token := strings.TrimSpace(os.Getenv("LLM_API_TOKEN")); token != "" {
+		return token
+	}
+	return "platform"
+}
+
+func llmNativeFromEnv() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("LLM_MODE")), "native")
 }
 
 func loadAgentConfig(path string) (agentConfig, error) {
