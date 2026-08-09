@@ -92,7 +92,10 @@ func TestCodexTurnIDIsStableAcrossReads(t *testing.T) {
 	}
 }
 
-func TestCodexSplitsTurnsOnEachUserMessage(t *testing.T) {
+// A rollout whose turn_context does not name a turn is read the older way, on
+// each prompt. Codex names them from the version this ships against, so this is
+// the fallback rather than the path a current rollout takes.
+func TestCodexSplitsUndelimitedTurnsOnEachUserMessage(t *testing.T) {
 	second := `{"timestamp":"2026-01-01T00:01:00.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"And again."}]}}
 {"timestamp":"2026-01-01T00:01:01.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done."}]}}`
 	turns := parseOrFail(t, FormatCodex, codexTranscript+"\n"+second)
@@ -209,5 +212,53 @@ func TestCodexCarriesTheSystemPrompt(t *testing.T) {
 	}
 	if context[1].Role != "user" {
 		t.Fatalf("expected the prompt after it, got %#v", context[1])
+	}
+}
+
+// The shape a real rollout has: the agent's instructions and the environment
+// arrive as messages before any turn is delimited, and codex names the turn in
+// turn_context rather than in the prompt.
+func TestCodexReadsOneTurnFromTheDelimiterNotThePrompts(t *testing.T) {
+	turns, err := Parse(FormatCodex, []byte(strings.Join([]string{
+		`{"timestamp":"2026-08-09T20:12:07.6Z","type":"session_meta","payload":{"id":"session-1","base_instructions":{"text":"You are Codex."}}}`,
+		`{"timestamp":"2026-08-09T20:12:07.642Z","type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"you are support agent"}]}}`,
+		`{"timestamp":"2026-08-09T20:12:07.642Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>/tmp</environment_context>"}]}}`,
+		`{"timestamp":"2026-08-09T20:12:07.643Z","type":"turn_context","payload":{"turn_id":"turn-a","model":"gpt-5"}}`,
+		`{"timestamp":"2026-08-09T20:12:07.648Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Hello"}]}}`,
+		`{"timestamp":"2026-08-09T20:12:08.0Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}]}}`,
+	}, "\n")))
+	if err != nil {
+		t.Fatalf("expected the rollout to parse, got %v", err)
+	}
+
+	// Three user-role messages would once have been three turns. There is one.
+	if len(turns) != 1 {
+		t.Fatalf("expected a single turn, got %d", len(turns))
+	}
+	if turns[0].ID != "turn-a" {
+		t.Fatalf("expected the turn codex named, got %q", turns[0].ID)
+	}
+	if turns[0].UserInput != "Hello" {
+		t.Fatalf("expected the prompt, got %q", turns[0].UserInput)
+	}
+
+	// The instructions and the environment are what the model was shown, so
+	// they are in the context even though they opened nothing.
+	context := turns[0].Steps[0].Context
+	roles := make([]string, 0, len(context))
+	for _, item := range context {
+		roles = append(roles, item.Role)
+	}
+	want := []string{"system", "developer", "user", "user"}
+	if len(roles) != len(want) {
+		t.Fatalf("expected %v, got %v", want, roles)
+	}
+	for i := range want {
+		if roles[i] != want[i] {
+			t.Fatalf("expected %v, got %v", want, roles)
+		}
+	}
+	if context[1].Text != "you are support agent" {
+		t.Fatalf("expected the agent's own instructions, got %q", context[1].Text)
 	}
 }

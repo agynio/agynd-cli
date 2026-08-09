@@ -30,6 +30,10 @@ type codexBaseInstructions struct {
 
 type codexTurnContext struct {
 	Model string `json:"model"`
+	// Codex names each turn here, which is the only place it delimits one. A
+	// user-role message does not: the environment context arrives as one, and
+	// so does anything else the harness puts in front of the model.
+	TurnID string `json:"turn_id"`
 }
 
 // A response item is the model's own output: a message it wrote, a reasoning
@@ -79,6 +83,11 @@ func parseCodex(data []byte) ([]Turn, error) {
 	model := ""
 	pending := map[string]*ToolCall{}
 	seen := &history{}
+	turnID := ""
+	// Codex delimits turns in turn_context, but only names them from the
+	// version this ships against. A rollout written by an older one is read the
+	// way it used to be -- on each prompt -- rather than yielding nothing.
+	delimited := hasCodexTurnIDs(data)
 
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	scanner.Buffer(make([]byte, 0, 64*1024), maxTranscriptLine)
@@ -102,11 +111,26 @@ func parseCodex(data []byte) ([]Turn, error) {
 			}
 		case "turn_context":
 			var context codexTurnContext
-			if json.Unmarshal(line.Payload, &context) == nil && context.Model != "" {
+			if json.Unmarshal(line.Payload, &context) != nil {
+				continue
+			}
+			if context.Model != "" {
 				model = context.Model
 			}
+			if context.TurnID != "" && context.TurnID != turnID {
+				turnID = context.TurnID
+				if current != nil {
+					turns = append(turns, *current)
+				}
+				current = &Turn{
+					ID:        turnID,
+					SessionID: sessionID,
+					StartedAt: line.Timestamp,
+					Model:     model,
+				}
+			}
 		case "response_item":
-			current = applyCodexItem(&turns, current, line, sessionID, model, pending, seen)
+			current = applyCodexItem(&turns, current, line, sessionID, model, pending, seen, delimited)
 		case "event_msg":
 			applyCodexUsage(current, line)
 		}
@@ -120,30 +144,59 @@ func parseCodex(data []byte) ([]Turn, error) {
 	return turns, nil
 }
 
-func applyCodexItem(turns *[]Turn, current *Turn, line codexLine, sessionID, model string, pending map[string]*ToolCall, seen *history) *Turn {
+// hasCodexTurnIDs reports whether the rollout names its turns, which decides
+// whether they are read from the delimiter or from the prompts.
+func hasCodexTurnIDs(data []byte) bool {
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	scanner.Buffer(make([]byte, 0, 64*1024), maxTranscriptLine)
+	for scanner.Scan() {
+		var line codexLine
+		if json.Unmarshal(scanner.Bytes(), &line) != nil || line.Type != "turn_context" {
+			continue
+		}
+		var context codexTurnContext
+		if json.Unmarshal(line.Payload, &context) == nil && context.TurnID != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func applyCodexItem(turns *[]Turn, current *Turn, line codexLine, sessionID, model string, pending map[string]*ToolCall, seen *history, delimited bool) *Turn {
 	var item codexResponseItem
 	if err := json.Unmarshal(line.Payload, &item); err != nil {
 		return current
 	}
 
-	// A user message opens a turn. Everything else continues the one in flight,
-	// and is dropped when there is none -- a transcript read mid-write can begin
-	// anywhere.
-	if item.Type == "message" && item.Role == "user" {
-		if current != nil {
+	// What the harness puts in front of the model -- the agent's own
+	// instructions, the environment it runs in -- arrives before any turn is
+	// open. It is context the model was shown, so it is kept, but it opens
+	// nothing.
+	if item.Type == "message" && item.Role != "assistant" {
+		text := codexText(item.Content)
+		seen.add(ContextItem{Role: item.Role, Text: text, At: line.Timestamp})
+		if item.Role != "user" {
+			return current
+		}
+		if !delimited && current != nil {
 			*turns = append(*turns, *current)
+			current = nil
 		}
-		seen.add(ContextItem{Role: "user", Text: codexText(item.Content), At: line.Timestamp})
-		return &Turn{
-			// The rollout has no turn id, so the moment it opened serves: it is
-			// stable across re-reads of the same file, which is what the span
-			// ids derived from it need.
-			ID:        sessionID + "@" + line.Timestamp.UTC().Format(time.RFC3339Nano),
-			SessionID: sessionID,
-			StartedAt: line.Timestamp,
-			Model:     model,
-			UserInput: codexText(item.Content),
+		if current == nil {
+			if delimited {
+				return nil
+			}
+			return &Turn{
+				ID:        sessionID + "@" + line.Timestamp.UTC().Format(time.RFC3339Nano),
+				SessionID: sessionID,
+				StartedAt: line.Timestamp,
+				Model:     model,
+				UserInput: text,
+			}
 		}
+		current.UserInput = joinText(current.UserInput, text)
+		current.EndedAt = line.Timestamp
+		return current
 	}
 	if current == nil {
 		return nil
