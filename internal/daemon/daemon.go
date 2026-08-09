@@ -179,8 +179,22 @@ func New(ctx context.Context, cfg config.Config, version string) (*Daemon, error
 func prepareAgentCLI(cfg config.Config) error {
 	// Which credential a CLI needs on disk follows from the CLI, so it is
 	// derived here rather than delivered: only this knows which one it runs.
-	if cfg.SDK == SDKCodex && cfg.LLMNative {
-		return writeCodexAuth(time.Now())
+	if cfg.SDK == SDKCodex {
+		if cfg.LLMNative {
+			if err := writeCodexAuth(time.Now()); err != nil {
+				return err
+			}
+		}
+		// The agent path writes config.toml later instead, once the platform
+		// has resolved MCP ports into it.
+		if cfg.Mode != config.ModeHolder {
+			return nil
+		}
+		// Holder still needs it: the transport it settles is what keeps codex
+		// off a WebSocket the proxy cannot terminate, and a sandbox is where
+		// someone starts codex by hand.
+		_, err := writeCodexConfig(cfg)
+		return err
 	}
 	if cfg.SDK != SDKClaude {
 		return nil

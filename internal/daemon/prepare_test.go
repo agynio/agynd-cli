@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/agynio/agynd-cli/internal/config"
@@ -95,6 +96,15 @@ func TestPrepareWritesCodexAuthInNativeMode(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(home, ".codex", "auth.json")); err != nil {
 		t.Fatalf("codex auth not written: %v", err)
+	}
+	// Without the config the CLI falls back to its own transport, which is a
+	// WebSocket the proxy cannot terminate.
+	config, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
+	if err != nil {
+		t.Fatalf("codex config not written: %v", err)
+	}
+	if !strings.Contains(string(config), "supports_websockets = false") {
+		t.Fatalf("codex config does not settle transport:\n%s", config)
 	}
 	if _, err := os.Stat(filepath.Join(home, claudeStateFileName)); !os.IsNotExist(err) {
 		t.Fatalf("wrote Claude state for a Codex workload: %v", err)
