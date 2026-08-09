@@ -34,6 +34,14 @@ name = "OpenAI HTTP/SSE"
 wire_api = "responses"
 requires_openai_auth = true
 supports_websockets = false
+
+# codex's own Apps MCP authenticates with a ChatGPT session cookie, which a
+# subscription token is not and the platform cannot mint -- it answers
+# no_biscuit_no_service and warns on every start. Declaring the built-in here
+# disables it. The command satisfies transport validation and never runs.
+[mcp_servers.codex_apps]
+enabled = false
+command = "true"
 `
 
 // traceHookCommand is the platform's trace hook, delivered to /agyn/bin beside

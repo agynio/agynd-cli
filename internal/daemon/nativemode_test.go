@@ -98,6 +98,9 @@ func TestCodexConfigNativeOmitsProvider(t *testing.T) {
 		// terminate and the vendor answers 404.
 		"supports_websockets = false",
 		"requires_openai_auth = true",
+		// Its Apps MCP wants a ChatGPT session cookie, which a subscription
+		// token is not, so it fails on every start.
+		"[mcp_servers.codex_apps]",
 	} {
 		if !strings.Contains(payload, required) {
 			t.Fatalf("native codex config lost %q:\n%s", required, payload)
