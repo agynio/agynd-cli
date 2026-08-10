@@ -28,6 +28,14 @@ import (
 
 const exportTimeout = 20 * time.Second
 
+// How long to wait for the CLI to finish writing the turn that just ended. Long
+// enough for a flush, short enough that a hook holding up a turn is not what a
+// user notices.
+const (
+	settleTimeout  = 5 * time.Second
+	settleInterval = 100 * time.Millisecond
+)
+
 // A trace id is 16 bytes, so an id of any other length is a misconfiguration
 // rather than a trace nobody has written to yet.
 const traceIDLength = 16
@@ -62,15 +70,6 @@ func run() error {
 	if path == "" {
 		return fmt.Errorf("hook payload names no transcript")
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read transcript: %w", err)
-	}
-	turns, err := transcript.Parse(format, data)
-	if err != nil {
-		return fmt.Errorf("parse transcript: %w", err)
-	}
-
 	sent, err := loadSent(path)
 	if err != nil {
 		// A sidecar that cannot be read is treated as empty. Re-exporting a
@@ -78,7 +77,10 @@ func run() error {
 		// write rather than a duplicate.
 		log.Printf("read sidecar: %v", err)
 	}
-	fresh := unsent(turns, sent)
+	fresh, err := settledTurns(format, path, sent)
+	if err != nil {
+		return err
+	}
 	if len(fresh) == 0 {
 		return nil
 	}
@@ -108,6 +110,45 @@ func run() error {
 		return fmt.Errorf("export turns: %w", err)
 	}
 	return recordSent(path, sent, fresh)
+}
+
+// settledTurns reads the turns the transcript has not sent, waiting for the one
+// that just ended to appear in it.
+//
+// The hook is run on turn completion, but the CLI does not necessarily finish
+// writing before running it: Claude Code fires Stop with the assistant's reply
+// still unflushed, so a transcript read the instant the hook starts holds a turn
+// with nothing in it. Waiting briefly is the difference between exporting the
+// turn and exporting nothing at all, because the hook is not run again.
+func settledTurns(format transcript.Format, path string, sent map[string]bool) ([]transcript.Turn, error) {
+	deadline := time.Now().Add(settleTimeout)
+	for {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read transcript: %w", err)
+		}
+		turns, err := transcript.Parse(format, data)
+		if err != nil {
+			return nil, fmt.Errorf("parse transcript: %w", err)
+		}
+		fresh := unsent(turns, sent)
+		// A finished turn is what there is to export. One still in flight is
+		// left for the next run rather than waited on: it may be a turn the CLI
+		// has not started answering.
+		if finished(fresh) || !time.Now().Before(deadline) {
+			return fresh, nil
+		}
+		time.Sleep(settleInterval)
+	}
+}
+
+func finished(turns []transcript.Turn) bool {
+	for _, turn := range turns {
+		if !turn.EndedAt.IsZero() {
+			return true
+		}
+	}
+	return false
 }
 
 // hookPayload is what the agent CLI writes to the hook's stdin. The CLIs differ
