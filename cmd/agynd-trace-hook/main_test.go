@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -147,5 +148,80 @@ func TestUnsentSkipsWhatWasAlreadyExported(t *testing.T) {
 
 	if len(fresh) != 1 || fresh[0].ID != "turn-2" {
 		t.Fatalf("expected only the unsent turn, got %v", fresh)
+	}
+}
+
+func writeLines(t *testing.T, path string, lines ...string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+}
+
+const claudePrompt = `{"type":"user","uuid":"turn-1","sessionId":"s","timestamp":"2026-08-09T05:00:00Z","message":{"role":"user","content":"hello"}}`
+const claudeReply = `{"type":"assistant","uuid":"a","sessionId":"s","timestamp":"2026-08-09T05:00:03Z","message":{"id":"m1","role":"assistant","model":"claude","content":[{"type":"text","text":"hi"}]}}`
+
+// Claude Code runs the hook with the assistant's reply still unflushed, so a
+// transcript read the instant the hook starts holds a turn with nothing in it.
+// The hook is not run again, so exporting that is exporting nothing.
+func TestTurnsAreReadOnceTheTranscriptCatchesUp(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	writeLines(t, path, claudePrompt)
+
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		writeLines(t, path, claudePrompt, claudeReply)
+	}()
+
+	turns, err := settledTurns(transcript.FormatClaude, path, map[string]bool{})
+	if err != nil {
+		t.Fatalf("expected the turns to read, got %v", err)
+	}
+	if !finished(turns) {
+		t.Fatal("expected the hook to wait for the turn the CLI was still writing")
+	}
+}
+
+// A transcript that never completes must not hold the turn open: the hook gives
+// up and lets the CLI carry on.
+func TestWaitingForTheTurnIsBounded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	writeLines(t, path, claudePrompt)
+
+	start := time.Now()
+	turns, err := settledTurns(transcript.FormatClaude, path, map[string]bool{})
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("expected the read to succeed, got %v", err)
+	}
+	if finished(turns) {
+		t.Fatal("expected no finished turn")
+	}
+	if elapsed < settleTimeout {
+		t.Fatalf("expected to wait for the turn, gave up after %s", elapsed)
+	}
+	if elapsed > settleTimeout*2 {
+		t.Fatalf("expected the wait to be bounded, took %s", elapsed)
+	}
+}
+
+// A turn already in the transcript is exported without waiting: codex flushes
+// its rollout before running the hook.
+func TestAFinishedTurnIsReadImmediately(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	writeLines(t, path, claudePrompt, claudeReply)
+
+	start := time.Now()
+	turns, err := settledTurns(transcript.FormatClaude, path, map[string]bool{})
+
+	if err != nil {
+		t.Fatalf("expected the turns to read, got %v", err)
+	}
+	if !finished(turns) {
+		t.Fatal("expected the finished turn")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("expected no wait, took %s", elapsed)
 	}
 }
