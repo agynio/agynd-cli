@@ -11,6 +11,83 @@
 # deserialize, and a flow it does not know to perform simply does not happen.
 ARG GO_VERSION=1.26
 ARG BUF_VERSION=1.66.0
+ARG TMUX_VERSION=3.5a
+ARG LIBEVENT_VERSION=2.1.12-stable
+ARG NCURSES_VERSION=6.5
+
+# tmux backs persistent shells and ships with agynd because agynd is what runs
+# it: one image, one version pair, no skew between the binary and the process
+# that starts the server.
+#
+# Built from source rather than taken from a package, because a sandbox runs
+# whatever image its environment names. A distro build fails on a musl base for
+# its libc and on a slim base for libtinfo; a glibc static build fails
+# getpwuid, which tmux calls to find the user's shell, because NSS cannot be
+# linked statically. musl-static with terminfo compiled in has no such
+# dependency and starts in an image carrying no terminal database at all.
+FROM alpine:3.21 AS tmux
+ARG TMUX_VERSION LIBEVENT_VERSION NCURSES_VERSION
+RUN apk add --no-cache build-base curl bison
+
+# ncurses with the entries tmux itself needs compiled in. The database stays
+# enabled so TERMINFO_DIRS can still supplement it for programs running inside
+# a pane, which do their own lookup and get no benefit from these fallbacks.
+RUN curl -fsSL "https://invisible-mirror.net/archives/ncurses/ncurses-${NCURSES_VERSION}.tar.gz" | tar xz && \
+    cd ncurses-${NCURSES_VERSION} && \
+    ./configure --prefix=/opt/deps --without-shared --without-debug --without-ada \
+        --without-cxx-binding --without-manpages --enable-widec --enable-pc-files \
+        --with-pkg-config-libdir=/opt/deps/lib/pkgconfig \
+        --with-fallbacks=tmux-256color,screen-256color,xterm-256color,xterm,vt100,linux,ansi,dumb && \
+    make -j"$(nproc)" && make install && \
+    # --enable-widec installs libncursesw and no libncurses, while tmux's link
+    # line asks for both. The wide build is the one we want -- UTF-8 in a pane
+    # is not optional -- so the plain name is aliased onto it rather than
+    # building a second, narrow copy nothing would use.
+    ln -sf libncursesw.a /opt/deps/lib/libncurses.a && \
+    ln -sf libncursesw.a /opt/deps/lib/libtinfo.a
+
+RUN curl -fsSL "https://github.com/libevent/libevent/releases/download/release-${LIBEVENT_VERSION}/libevent-${LIBEVENT_VERSION}.tar.gz" | tar xz && \
+    cd libevent-${LIBEVENT_VERSION} && \
+    ./configure --prefix=/opt/deps --disable-shared --enable-static --disable-openssl --disable-samples && \
+    make -j"$(nproc)" && make install
+
+# forkpty is asserted rather than detected. Under --enable-static the configure
+# probe links statically and fails for reasons unrelated to the function, after
+# which tmux supplies its own prototype from compat.h -- with a non-const
+# termios pointer that musl's pty.h contradicts, and the build stops on
+# conflicting declarations across most objects. musl has forkpty in libc, so
+# the answer the probe should have reached is the one given here.
+#
+# The variable is the AC_SEARCH_LIBS cache, not AC_CHECK_FUNC's: tmux looks for
+# this one in libutil, which musl does not ship because it does not need to.
+#
+# Only forkpty. fdforkpty is genuinely absent on musl and tmux supplies its own
+# from compat -- asserting that one leaves it implicitly declared and the build
+# fails somewhere else instead.
+RUN curl -fsSL "https://github.com/tmux/tmux/releases/download/${TMUX_VERSION}/tmux-${TMUX_VERSION}.tar.gz" | tar xz && \
+    cd tmux-${TMUX_VERSION} && \
+    PKG_CONFIG_PATH=/opt/deps/lib/pkgconfig \
+    CPPFLAGS="-I/opt/deps/include -I/opt/deps/include/ncursesw" \
+    LDFLAGS="-L/opt/deps/lib" \
+    ac_cv_search_forkpty="none required" \
+    ./configure --enable-static && \
+    make -j"$(nproc)" && strip tmux && \
+    cp tmux /out-tmux
+# A dynamic dependency here would be one the workspace image has to satisfy,
+# which is the whole thing this stage exists to avoid.
+RUN ! ldd /out-tmux 2>/dev/null | grep -q '=>' && /out-tmux -V
+
+# The curated terminfo tree, for the programs running inside a pane. vim and
+# htop do their own lookup and get nothing from tmux's compiled-in fallbacks,
+# and a slim image may carry no database for them to find.
+RUN apk add --no-cache ncurses-terminfo && \
+    mkdir -p /out-terminfo && \
+    for t in tmux-256color screen-256color xterm-256color xterm xterm-color \
+             vt100 vt220 linux ansi dumb rxvt-unicode-256color \
+             alacritty kitty xterm-kitty ghostty wezterm foot screen; do \
+      src="$(find /usr/share/terminfo -name "$t" -type f -print -quit)"; \
+      [ -n "$src" ] && install -D "$src" "/out-terminfo/$(basename "$(dirname "$src")")/$t" || true; \
+    done
 
 FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS buf
 ARG BUF_VERSION
@@ -56,8 +133,26 @@ COPY --from=build /out/agynd /opt/agyn/agynd
 # must never lag the platform for the same reason agynd must not.
 COPY --from=build /out/agynd-trace-hook /opt/agyn/agynd-trace-hook
 
+# tmux goes on PATH rather than beside the configuration, which shadows any
+# tmux the workspace image ships. That is the point: a client and a server
+# disagreeing on protocol version fail to connect, and an engineer running
+# tmux inside a shell would meet that error with no way to interpret it. One
+# binary means one version. The platform's own server stays off the default
+# socket regardless, so a personal tmux still gets its own server and its own
+# ~/.tmux.conf.
+COPY --from=tmux /out-tmux /opt/agyn/tmux
+COPY --from=tmux /out-terminfo /opt/agyn/terminfo
+COPY tmux.conf /opt/agyn/tmux.conf
+
 # The Orchestrator sets no command: the image describes how it delivers itself.
 # It runs as root because the emptyDir it writes into is root-owned on a fresh
 # Pod; the copied binary is world-executable so the main container can run it
 # whatever user its image defines.
-ENTRYPOINT ["/bin/sh", "-c", "set -e; mkdir -p /agyn/bin; cp /opt/agyn/agynd /agyn/bin/agynd; chmod 0755 /agyn/bin/agynd; cp /opt/agyn/agynd-trace-hook /agyn/bin/agynd-trace-hook; chmod 0755 /agyn/bin/agynd-trace-hook"]
+ENTRYPOINT ["/bin/sh", "-c", "set -e; \
+mkdir -p /agyn/bin /agyn/terminfo /agyn/run; \
+chmod 0777 /agyn/run; \
+cp /opt/agyn/agynd /agyn/bin/agynd; chmod 0755 /agyn/bin/agynd; \
+cp /opt/agyn/agynd-trace-hook /agyn/bin/agynd-trace-hook; chmod 0755 /agyn/bin/agynd-trace-hook; \
+cp /opt/agyn/tmux /agyn/bin/tmux; chmod 0755 /agyn/bin/tmux; \
+cp -R /opt/agyn/terminfo/. /agyn/terminfo/; \
+cp /opt/agyn/tmux.conf /agyn/tmux.conf; chmod 0644 /agyn/tmux.conf"]
