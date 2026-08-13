@@ -158,8 +158,19 @@ func installAgentRuntimeConfig(t *testing.T, agentBinary string) {
 		runner.run(t, "rm", "-f", "/agyn/config.json")
 	})
 
+	// The image states what it carries, not where the platform mounted it, so
+	// bin is resolved against /agyn and an absolute value is refused. The
+	// binary this test builds lands in a temp dir, so it is installed onto the
+	// volume under the name the config names.
+	installedName := "bin/" + filepath.Base(agentBinary)
+	runner.run(t, "cp", agentBinary, filepath.Join("/agyn", installedName))
+	runner.run(t, "chmod", "0755", filepath.Join("/agyn", installedName))
+	t.Cleanup(func() {
+		runner.run(t, "rm", "-f", filepath.Join("/agyn", installedName))
+	})
+
 	configPath := filepath.Join(t.TempDir(), "config.json")
-	payload := fmt.Sprintf(`{"sdk":"agn","bin":%q}`, agentBinary)
+	payload := fmt.Sprintf(`{"sdk":"agn","bin":%q}`, installedName)
 	if err := os.WriteFile(configPath, []byte(payload), 0o600); err != nil {
 		t.Fatalf("write test config: %v", err)
 	}
