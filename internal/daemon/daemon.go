@@ -28,6 +28,7 @@ import (
 	claude "github.com/agynio/claude-sdk-go"
 	codex "github.com/agynio/codex-sdk-go"
 	"github.com/google/uuid"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -154,7 +155,7 @@ func New(ctx context.Context, cfg config.Config, version string) (*Daemon, error
 		return nil, err
 	}
 	if cfg.Mode == config.ModeHolder {
-		return newHolderDaemon(cfg), nil
+		return newHolderDaemon(ctx, cfg)
 	}
 	switch cfg.SDK {
 	case SDKCodex:
@@ -210,27 +211,84 @@ func prepareAgentCLI(cfg config.Config) error {
 	return writeClaudeSettings(claudeBaseURL(cfg.LLMBaseURL), cfg.LLMAPIToken, cfg.MCPServers, cfg.LLMNative)
 }
 
-func newHolderDaemon(cfg config.Config) *Daemon {
-	return &Daemon{
+func newHolderDaemon(ctx context.Context, cfg config.Config) (*Daemon, error) {
+	d := &Daemon{
 		cfg: cfg,
 		sdk: config.ModeHolder,
 	}
+	// A holder names no agent, so it resolves none: the environment's init
+	// scripts are the whole of what it fetches. Without an environment there is
+	// nothing to ask for, and the gateway is left alone.
+	if strings.TrimSpace(cfg.EnvironmentID) == "" {
+		return d, nil
+	}
+	conn, err := connectHolderGateway(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	d.gatewayConn = conn
+	d.agents = gatewayv1.NewAgentsGatewayClient(conn)
+	return d, nil
+}
+
+// connectHolderGateway dials the gateway on the same schedule agent mode uses.
+// It cannot reuse connectPlatform: that resolves the agent and its skills, and
+// a sandbox has neither.
+func connectHolderGateway(ctx context.Context, cfg config.Config) (*grpc.ClientConn, error) {
+	var lastErr error
+	for i, delay := range platformConnectBackoff {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		conn, err := platform.DialGateway(cfg.GatewayAddress)
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+		log.Printf(
+			"holder gateway dial attempt %d/%d failed: %v; retrying in %s",
+			i+1,
+			len(platformConnectBackoff)+1,
+			err,
+			delay,
+		)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	conn, err := platform.DialGateway(cfg.GatewayAddress)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"holder gateway dial failed after %d attempts: %w (previous: %v)",
+			len(platformConnectBackoff)+1,
+			err,
+			lastErr,
+		)
+	}
+	return conn, nil
+}
+
+var platformConnectBackoff = []time.Duration{
+	1 * time.Second,
+	1 * time.Second,
+	2 * time.Second,
+	3 * time.Second,
+	5 * time.Second,
+	5 * time.Second,
+	8 * time.Second,
+	10 * time.Second,
+	15 * time.Second,
+	15 * time.Second,
+	15 * time.Second,
 }
 
 func connectPlatform(ctx context.Context, cfg config.Config) (*platformSetup, config.Config, error) {
-	backoff := []time.Duration{
-		1 * time.Second,
-		1 * time.Second,
-		2 * time.Second,
-		3 * time.Second,
-		5 * time.Second,
-		5 * time.Second,
-		8 * time.Second,
-		10 * time.Second,
-		15 * time.Second,
-		15 * time.Second,
-		15 * time.Second,
-	}
+	backoff := platformConnectBackoff
 	var lastErr error
 	for i, delay := range backoff {
 		if err := ctx.Err(); err != nil {
@@ -430,7 +488,7 @@ func (d *Daemon) Close() {
 
 func (d *Daemon) Run(ctx context.Context) error {
 	if d.sdk == config.ModeHolder {
-		return runHolder(ctx, d.cfg.WorkDir)
+		return runHolder(ctx, d.agents, d.cfg.EnvironmentID, d.cfg.WorkDir)
 	}
 	d.ensureProcessingWake()
 	go d.runKeepalive(ctx)

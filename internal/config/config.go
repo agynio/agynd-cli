@@ -88,10 +88,7 @@ func fromEnv(configPath string) (Config, error) {
 		return Config{}, err
 	}
 	environmentID := strings.TrimSpace(os.Getenv("ENVIRONMENT_ID"))
-	gatewayAddress := strings.TrimSpace(os.Getenv("GATEWAY_ADDRESS"))
-	if gatewayAddress == "" {
-		gatewayAddress = "gateway.agyn:443"
-	}
+	gatewayAddress := gatewayAddressFromEnv()
 	tracingAddress := strings.TrimSpace(os.Getenv("TRACING_ADDRESS"))
 	if tracingAddress == "" {
 		tracingAddress = "tracing.agyn:443"
@@ -185,7 +182,9 @@ func parseMode(raw string) (string, error) {
 }
 
 // A sandbox prepares the agent CLI it will not spawn, so holder mode reads the
-// same LLM and MCP variables agent mode does.
+// same LLM and MCP variables agent mode does. It reads the environment and the
+// gateway too: the environment's init scripts are its own to run, and fetching
+// them is the one call a holder makes.
 func holderConfig(configPath string) (Config, error) {
 	workDir := strings.TrimSpace(os.Getenv("WORKSPACE_DIR"))
 	if workDir == "" {
@@ -196,13 +195,15 @@ func holderConfig(configPath string) (Config, error) {
 		return Config{}, err
 	}
 	cfg := Config{
-		Mode:        ModeHolder,
-		SDK:         ModeHolder,
-		WorkDir:     workDir,
-		LLMBaseURL:  llmBaseURLFromEnv(),
-		LLMAPIToken: llmAPITokenFromEnv(),
-		LLMNative:   llmNativeFromEnv(),
-		MCPServers:  mcpServers,
+		Mode:           ModeHolder,
+		SDK:            ModeHolder,
+		EnvironmentID:  strings.TrimSpace(os.Getenv("ENVIRONMENT_ID")),
+		GatewayAddress: gatewayAddressFromEnv(),
+		WorkDir:        workDir,
+		LLMBaseURL:     llmBaseURLFromEnv(),
+		LLMAPIToken:    llmAPITokenFromEnv(),
+		LLMNative:      llmNativeFromEnv(),
+		MCPServers:     mcpServers,
 	}
 	// A workspace-only environment carries no CLI and so no config.json. There
 	// is nothing to prepare, which is not a failure.
@@ -212,6 +213,13 @@ func holderConfig(configPath string) (Config, error) {
 		}
 	}
 	return cfg, nil
+}
+
+func gatewayAddressFromEnv() string {
+	if address := strings.TrimSpace(os.Getenv("GATEWAY_ADDRESS")); address != "" {
+		return address
+	}
+	return "gateway.agyn:443"
 }
 
 func llmBaseURLFromEnv() string {

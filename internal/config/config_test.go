@@ -512,8 +512,35 @@ func TestFromEnvHolderModeMinimal(t *testing.T) {
 	if cfg.AgentID.String() != "00000000-0000-0000-0000-000000000000" {
 		t.Fatalf("expected zero agent id, got %s", cfg.AgentID.String())
 	}
-	if cfg.ThreadID != "" || cfg.WorkloadID != "" || cfg.GatewayAddress != "" {
-		t.Fatalf("expected holder mode to skip platform config, got thread=%q workload=%q gateway=%q", cfg.ThreadID, cfg.WorkloadID, cfg.GatewayAddress)
+	if cfg.ThreadID != "" || cfg.WorkloadID != "" {
+		t.Fatalf("expected holder mode to skip agent instance config, got thread=%q workload=%q", cfg.ThreadID, cfg.WorkloadID)
+	}
+	// The gateway is not skipped: a holder fetches its environment's init
+	// scripts over it.
+	if cfg.GatewayAddress != "gateway.agyn:443" {
+		t.Fatalf("expected holder default gateway address, got %q", cfg.GatewayAddress)
+	}
+	if cfg.EnvironmentID != "" {
+		t.Fatalf("expected no environment id, got %q", cfg.EnvironmentID)
+	}
+}
+
+func TestFromEnvHolderModeReadsEnvironmentAndGateway(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "missing-config.json")
+	t.Setenv("AGYND_MODE", ModeHolder)
+	t.Setenv("ENVIRONMENT_ID", " 345b7189-ebc8-4b8d-a324-6fe316178dd8 ")
+	t.Setenv("GATEWAY_ADDRESS", " gateway.example:443 ")
+
+	cfg, err := fromEnv(configPath)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.EnvironmentID != "345b7189-ebc8-4b8d-a324-6fe316178dd8" {
+		t.Fatalf("expected trimmed environment id, got %q", cfg.EnvironmentID)
+	}
+	if cfg.GatewayAddress != "gateway.example:443" {
+		t.Fatalf("expected trimmed gateway address, got %q", cfg.GatewayAddress)
 	}
 }
 
