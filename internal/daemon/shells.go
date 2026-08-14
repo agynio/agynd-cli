@@ -49,6 +49,20 @@ const (
 	// start-server daemonizes and returns; this only bounds a binary that
 	// hangs rather than starting.
 	tmuxStartTimeout = 15 * time.Second
+
+	// How often each attached client is asked to re-read its title.
+	//
+	// tmux evaluates set-titles-string only when it redraws a client, and its
+	// own periodic redraw is the status line's timer -- which the platform
+	// turns off. So a shell that changes directory goes on announcing the old
+	// one until something else redraws it, and for a browser tab that means
+	// until the person clicks into the terminal. This stands in for the timer
+	// the status line would have provided.
+	titleRefreshInterval = time.Second
+
+	// A tmux client talking to a server on the same socket; a timeout here only
+	// bounds one that has stopped answering.
+	tmuxCommandTimeout = 5 * time.Second
 )
 
 var (
@@ -88,6 +102,64 @@ func startShellServer(ctx context.Context) {
 		return
 	}
 	log.Printf("shell server started on socket %q", tmuxSocketName)
+
+	go refreshShellTitles(ctx)
+}
+
+// refreshShellTitles keeps what each shell announces about itself current.
+//
+// Without it a tab names the directory the shell was in when something last
+// redrew it, which is not the same as the directory the shell is in.
+func refreshShellTitles(ctx context.Context) {
+	ticker := time.NewTicker(titleRefreshInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			refreshAttachedClients(ctx)
+		}
+	}
+}
+
+// refreshAttachedClients asks tmux to re-evaluate the title of every client.
+//
+// -S redraws the status line rather than the screen: the title is recomputed
+// on that path too, so this costs a few bytes a second instead of repainting
+// every pane. A container with nothing attached costs one listing and no
+// writes.
+//
+// Every failure is ignored. The server may not be running, and a title that
+// did not refresh is a stale tab, which is what this is already fixing.
+func refreshAttachedClients(ctx context.Context) {
+	listCtx, cancel := context.WithTimeout(ctx, tmuxCommandTimeout)
+	defer cancel()
+	list := tmuxCommandContext(listCtx, tmuxBinaryPath, "-L", tmuxSocketName, "list-clients", "-F", "#{client_tty}")
+	list.Env = shellServerEnv()
+	out, err := list.Output()
+	if err != nil {
+		return
+	}
+
+	// One invocation for every client: ";" separates commands within a single
+	// tmux run, so the cost does not grow with the number of open tabs.
+	args := []string{"-L", tmuxSocketName}
+	for _, tty := range strings.Fields(string(out)) {
+		if len(args) > 2 {
+			args = append(args, ";")
+		}
+		args = append(args, "refresh-client", "-S", "-t", tty)
+	}
+	if len(args) == 2 {
+		return
+	}
+
+	refreshCtx, cancelRefresh := context.WithTimeout(ctx, tmuxCommandTimeout)
+	defer cancelRefresh()
+	refresh := tmuxCommandContext(refreshCtx, tmuxBinaryPath, args...)
+	refresh.Env = shellServerEnv()
+	_ = refresh.Run()
 }
 
 // shellServerEnv is what every shell in this container inherits, because the
