@@ -158,8 +158,18 @@ func installAgentRuntimeConfig(t *testing.T, agentBinary string) {
 		runner.run(t, "rm", "-f", "/agyn/config.json")
 	})
 
+	// bin is relative to the volume and resolved against it, so the agent has
+	// to live under the volume rather than wherever the test built it. This is
+	// what a runtime image does: it states what it carries, not where the
+	// platform mounted it.
+	installedName := filepath.Base(agentBinary)
+	installedPath := filepath.Join("/agyn/bin", installedName)
+	runner.run(t, "cp", agentBinary, installedPath)
+	runner.run(t, "chmod", "0755", installedPath)
+	t.Cleanup(func() { runner.run(t, "rm", "-f", installedPath) })
+
 	configPath := filepath.Join(t.TempDir(), "config.json")
-	payload := fmt.Sprintf(`{"sdk":"agn","bin":%q}`, agentBinary)
+	payload := fmt.Sprintf(`{"sdk":"agn","bin":%q}`, filepath.Join("bin", installedName))
 	if err := os.WriteFile(configPath, []byte(payload), 0o600); err != nil {
 		t.Fatalf("write test config: %v", err)
 	}
