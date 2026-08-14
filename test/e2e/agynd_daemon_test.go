@@ -158,8 +158,18 @@ func installAgentRuntimeConfig(t *testing.T, agentBinary string) {
 		runner.run(t, "rm", "-f", "/agyn/config.json")
 	})
 
+	// bin is relative to the volume and resolved against it, so the agent has
+	// to live under the volume rather than wherever the test built it. This is
+	// what a runtime image does: it states what it carries, not where the
+	// platform mounted it.
+	installedName := filepath.Base(agentBinary)
+	installedPath := filepath.Join("/agyn/bin", installedName)
+	runner.run(t, "cp", agentBinary, installedPath)
+	runner.run(t, "chmod", "0755", installedPath)
+	t.Cleanup(func() { runner.run(t, "rm", "-f", installedPath) })
+
 	configPath := filepath.Join(t.TempDir(), "config.json")
-	payload := fmt.Sprintf(`{"sdk":"agn","bin":%q}`, agentBinary)
+	payload := fmt.Sprintf(`{"sdk":"agn","bin":%q}`, filepath.Join("bin", installedName))
 	if err := os.WriteFile(configPath, []byte(payload), 0o600); err != nil {
 		t.Fatalf("write test config: %v", err)
 	}
@@ -366,10 +376,12 @@ func (s *agyndGatewayStub) assertInitialized(t *testing.T) {
 	t.Helper()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// ListMcps is deliberately absent: the MCP list comes from the Orchestrator
+	// rather than the API (#166), so agynd no longer asks the gateway for it.
+	// The stub still serves the call, because nothing says it may not be asked.
 	checks := map[string]int{
 		"GetAgent":        s.getAgentCalls,
 		"ListSkills":      s.listSkillsCalls,
-		"ListMcps":        s.listMCPsCalls,
 		"ListInitScripts": s.listInitScriptsCalls,
 	}
 	for name, calls := range checks {
