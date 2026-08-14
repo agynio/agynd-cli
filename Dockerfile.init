@@ -77,16 +77,17 @@ RUN curl -fsSL "https://github.com/tmux/tmux/releases/download/${TMUX_VERSION}/t
 # which is the whole thing this stage exists to avoid.
 RUN ! ldd /out-tmux 2>/dev/null | grep -q '=>' && /out-tmux -V
 
-# The curated terminfo tree, for the programs running inside a pane. vim and
-# htop do their own lookup and get nothing from tmux's compiled-in fallbacks,
-# and a slim image may carry no database for them to find.
-RUN apk add --no-cache ncurses-terminfo && \
-    mkdir -p /out-terminfo && \
-    for t in tmux-256color screen-256color xterm-256color xterm xterm-color \
-             vt100 vt220 linux ansi dumb rxvt-unicode-256color \
-             alacritty kitty xterm-kitty ghostty wezterm foot screen; do \
-      src="$(find /usr/share/terminfo -name "$t" -type f -print -quit)"; \
-      [ -n "$src" ] && install -D "$src" "/out-terminfo/$(basename "$(dirname "$src")")/$t" || true; \
+# The terminal database, taken from the ncurses built above rather than from a
+# package. It is the same source the binary was linked against, so an entry it
+# names and an entry it can read are the same set -- and it is complete, which
+# the apk layout was not: the common entries live in one package and the exotic
+# ones in another, so copying by name silently yielded three files.
+#
+# Needed by tmux for the terminal on the far end of a connection, and by the
+# programs running inside a pane, which do their own lookup.
+RUN cp -R /opt/deps/share/terminfo /out-terminfo && \
+    for t in xterm-256color tmux-256color screen-256color xterm vt100 linux ansi; do \
+      test -f "/out-terminfo/$(printf %s "$t" | cut -c1)/$t" || { echo "missing terminfo entry: $t" >&2; exit 1; }; \
     done
 
 FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS buf
