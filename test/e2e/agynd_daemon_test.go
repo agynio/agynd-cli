@@ -376,10 +376,12 @@ func (s *agyndGatewayStub) assertInitialized(t *testing.T) {
 	t.Helper()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// ListMcps is deliberately absent: the MCP list comes from the Orchestrator
+	// rather than the API (#166), so agynd no longer asks the gateway for it.
+	// The stub still serves the call, because nothing says it may not be asked.
 	checks := map[string]int{
 		"GetAgent":        s.getAgentCalls,
 		"ListSkills":      s.listSkillsCalls,
-		"ListMcps":        s.listMCPsCalls,
 		"ListInitScripts": s.listInitScriptsCalls,
 	}
 	for name, calls := range checks {
