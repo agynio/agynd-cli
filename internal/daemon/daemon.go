@@ -658,6 +658,14 @@ func isRetryableCodexErrorNotification(err error) bool {
 	return false
 }
 
+// codexWillRetryTurn reports whether codex is retrying the turn itself. It
+// answers for the notification it is given, so the caller decides what a turn
+// codex has stopped retrying means for the class of failure it is.
+func codexWillRetryTurn(err error) bool {
+	var notificationErr *codexbridge.ErrorNotificationError
+	return errors.As(err, &notificationErr) && notificationErr.WillRetry
+}
+
 func operationContextErr(ctx context.Context, err error) error {
 	if err == nil {
 		return nil
@@ -868,12 +876,24 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 		if result.Err != nil {
 			if !errors.Is(result.Err, codexbridge.ErrMissingAgentMessage) {
 				if isRetryableCodexErrorNotification(result.Err) {
-					log.Printf("codex turn transient failure: turn_id=%s message_id=%s cause=%s; retrying sync", turnID, message.ID, result.Err)
-					return operationError(
-						opCodexTurnResult,
-						0,
-						fmt.Errorf("codex turn %s transient failure for message %s: %w", turnID, message.ID, result.Err),
-					)
+					if codexWillRetryTurn(result.Err) {
+						log.Printf("codex turn transient failure: turn_id=%s message_id=%s cause=%s; retrying sync", turnID, message.ID, result.Err)
+						return operationError(
+							opCodexTurnResult,
+							0,
+							fmt.Errorf("codex turn %s transient failure for message %s: %w", turnID, message.ID, result.Err),
+						)
+					}
+					// codex is not retrying, so the turn is over, and running it
+					// again only asks the same question for the same answer: a
+					// response that completes carrying no assistant message is
+					// reported this way and is an ordinary thing to return. End
+					// it the way an empty turn ends.
+					log.Printf("codex ended turn %s without a message for %s: %s", turnID, message.ID, result.Err)
+					if err := d.publishFinalMessage(ctx, SDKCodex, message, ""); err != nil {
+						return err
+					}
+					return d.ackMessage(ctx, message)
 				}
 				return operationError(
 					opCodexTurnResult,
