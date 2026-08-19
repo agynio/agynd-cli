@@ -603,9 +603,10 @@ func TestRunRetriesTransientCodexStreamFailure(t *testing.T) {
 
 	waitForStartTurn()
 	turnErr := &codexbridge.ErrorNotificationError{
-		ThreadID: "codex-started",
-		TurnID:   "turn-1",
-		Message:  "stream disconn",
+		ThreadID:  "codex-started",
+		TurnID:    "turn-1",
+		Message:   "stream disconn",
+		WillRetry: true,
 	}
 	daemon.tracker.Notify(codexbridge.TurnResult{ThreadID: "codex-started", TurnID: "turn-1", Err: turnErr})
 	select {

@@ -344,9 +344,10 @@ func TestHandleCodexMessageReturnsTransientNotificationAsRetryable(t *testing.T)
 		errCh <- daemon.handleCodexMessage(context.Background(), message)
 	}()
 	turnErr := &codexbridge.ErrorNotificationError{
-		ThreadID: "codex-started",
-		TurnID:   "turn-1",
-		Message:  "stream disconn",
+		ThreadID:  "codex-started",
+		TurnID:    "turn-1",
+		Message:   "stream disconn",
+		WillRetry: true,
 	}
 	daemon.tracker.Notify(codexbridge.TurnResult{
 		ThreadID: "codex-started",
@@ -632,5 +633,70 @@ func TestEnsureCodexThreadIsOneConversationAcrossThreads(t *testing.T) {
 	}
 	if stored.CodexThreadID != first {
 		t.Fatalf("expected stored codex id %q, got %q", first, stored.CodexThreadID)
+	}
+}
+
+// A response that completes without an assistant message is an ordinary thing
+// for codex to return, and it reports the turn with will_retry=false. Restarting
+// it re-runs the same request for the same answer: one message became a storm of
+// turns, each backing off further, until the daemon gave up on it.
+func TestHandleCodexMessageDoesNotRestartATurnCodexFinishedWith(t *testing.T) {
+	threadsClient := &fakeClaudeThreadsClient{}
+	daemon := &Daemon{
+		sdk:          SDKCodex,
+		cfg:          config.Config{AgentID: uuid.MustParse(testAgentID), WorkDir: "/tmp"},
+		codex:        &fakeCodexClient{},
+		mapping:      codexbridge.NewThreadMapping(),
+		mappingStore: codexbridge.NewThreadMappingStore(t.TempDir()),
+		tracker:      codexbridge.NewTurnTracker(),
+		agent:        &agentsv1.Agent{FinalMessage: agentsv1.AgentFinalMessage_AGENT_FINAL_MESSAGE_DEFAULT_THREAD},
+		threads:      platform.NewThreads(threadsClient),
+	}
+
+	message := platform.Message{ID: "msg-1", ThreadID: "thread-1", Body: "hello"}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- daemon.handleCodexMessage(context.Background(), message)
+	}()
+	time.Sleep(50 * time.Millisecond)
+	daemon.tracker.Notify(codexbridge.TurnResult{
+		ThreadID: "codex-started",
+		TurnID:   "turn-1",
+		Err: &codexbridge.ErrorNotificationError{
+			ThreadID:  "codex-started",
+			TurnID:    "turn-1",
+			Message:   "stream disconnected before completion: error sending request for url (http://llm-proxy.agyn/v1/responses)",
+			WillRetry: false,
+		},
+	})
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("expected the turn to end quietly, got %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("handleCodexMessage did not finish")
+	}
+	if len(threadsClient.sendRequests) != 0 {
+		t.Fatalf("expected nothing to be posted, got %d send requests", len(threadsClient.sendRequests))
+	}
+	if len(threadsClient.ackRequests) != 1 {
+		t.Fatalf("expected the message to be acked once, got %d", len(threadsClient.ackRequests))
+	}
+}
+
+// The daemon resyncs behind codex only while codex is retrying the turn itself.
+func TestCodexWillRetryTurnReadsTheNotification(t *testing.T) {
+	err := &codexbridge.ErrorNotificationError{Message: "stream disconnected before completion", WillRetry: true}
+	if !codexWillRetryTurn(err) {
+		t.Fatal("expected a notification codex is retrying to report so")
+	}
+	err.WillRetry = false
+	if codexWillRetryTurn(err) {
+		t.Fatal("expected a notification codex has given up on to report so")
+	}
+	if codexWillRetryTurn(fmt.Errorf("not a notification")) {
+		t.Fatal("expected a plain error to report no retry")
 	}
 }
