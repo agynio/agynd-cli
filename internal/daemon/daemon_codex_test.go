@@ -554,3 +554,43 @@ func TestIsRetryableCodexErrorNotificationRejectsUnknown(t *testing.T) {
 		t.Fatal("expected non-notification error to remain non-retryable")
 	}
 }
+
+// An agent that discards its final message ends its turns silent by design, and
+// the daemon must survive that: it used to treat an empty turn as terminal and
+// exit, taking every other thread the workload was serving with it.
+func TestHandleCodexMessageEmptyTurnAcksWithoutPosting(t *testing.T) {
+	threadsClient := &fakeClaudeThreadsClient{}
+	daemon := &Daemon{
+		sdk:          SDKCodex,
+		cfg:          config.Config{AgentID: uuid.MustParse(testAgentID), WorkDir: "/tmp"},
+		codex:        &fakeCodexClient{},
+		mapping:      codexbridge.NewThreadMapping(),
+		mappingStore: codexbridge.NewThreadMappingStore(t.TempDir()),
+		tracker:      codexbridge.NewTurnTracker(),
+		agent:        &agentsv1.Agent{FinalMessage: agentsv1.AgentFinalMessage_AGENT_FINAL_MESSAGE_DISCARD},
+		threads:      platform.NewThreads(threadsClient),
+	}
+
+	message := platform.Message{ID: "msg-1", ThreadID: "thread-1", Body: "hello"}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- daemon.handleCodexMessage(context.Background(), message)
+	}()
+	time.Sleep(50 * time.Millisecond)
+	daemon.tracker.Notify(codexbridge.TurnResult{ThreadID: "codex-started", TurnID: "turn-1", Message: "  "})
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("expected an empty turn to be tolerated, got %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("handleCodexMessage did not finish after turn completion")
+	}
+	if len(threadsClient.sendRequests) != 0 {
+		t.Fatalf("expected nothing to be posted, got %d send requests", len(threadsClient.sendRequests))
+	}
+	if len(threadsClient.ackRequests) != 1 {
+		t.Fatalf("expected the message to be acked, got %d ack requests", len(threadsClient.ackRequests))
+	}
+}

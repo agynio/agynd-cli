@@ -895,12 +895,14 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 			}
 			result.Message = readbackMessage
 		}
+		// A turn that ends without text is not a failure. An agent that
+		// discards its final message says everything it has to say over the
+		// CLI and ends silent by design, and one that posts it has nothing to
+		// post -- publishFinalMessage handles both. The agn and claude paths
+		// have always acked here; codex killing the daemon instead cost the
+		// workload every thread it was serving.
 		if strings.TrimSpace(result.Message) == "" {
-			return operationError(
-				opCodexTurnResult,
-				0,
-				terminalCodexTurn(fmt.Errorf("codex turn %s completed with empty response for message %s", turnID, message.ID)),
-			)
+			log.Printf("codex turn %s produced no text for message %s", turnID, message.ID)
 		}
 		if err := d.publishFinalMessage(ctx, SDKCodex, message, result.Message); err != nil {
 			return err
