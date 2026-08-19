@@ -78,6 +78,25 @@ command = "` + traceHookCommand + `"
 // A variable so a test can write somewhere it is allowed to.
 var codexSystemConfigPath = "/etc/codex/config.toml"
 
+// A workload has no keyring. codex stores MCP OAuth tokens in the OS secret
+// service by default, and in a container there is no dbus session to reach --
+// it warns, and then registers no MCP tools at all:
+//
+//	mcp.runtime.refresh: failed to read OAuth tokens from keyring:
+//	  Platform secure storage failure: no secret service provider or dbus session found
+//	thread_start.dynamic_tool_count=0
+//
+// The model is then offered `shell` alone, so a call to any MCP tool comes back
+// "unsupported call" -- a failure that names the tool rather than the store, one
+// layer away from the cause. On a file store the same servers register: the
+// model is offered mcp__filesystem and mcp__memory as it should be.
+//
+// File rather than none: the servers a workload runs are local and hold no
+// OAuth today, but a server that does needs its tokens to survive the CLI
+// restarting inside the same workload.
+const codexCredentialsStore = `mcp_oauth_credentials_store = "file"
+`
+
 const codexConfigTemplate = `model_provider = "platform"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
@@ -178,6 +197,7 @@ func codexConfig(cfg config.Config) string {
 	if cfg.LLMNative {
 		payload = codexNativeConfigTemplate
 	}
+	payload += codexCredentialsStore
 	mcpServers := cfg.MCPServers
 	if len(mcpServers) == 0 {
 		return payload
