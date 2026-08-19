@@ -12,7 +12,7 @@ func TestThreadMappingStoreSaveLoad(t *testing.T) {
 	homeDir := t.TempDir()
 	store := NewThreadMappingStore(homeDir)
 	record := ThreadMappingRecord{
-		PlatformThreadID: "platform-1",
+		InstanceID:       "instance-1",
 		CodexThreadID:    "codex-1",
 		CreatedAtUnixMs:  1700000000000,
 		LastUsedAtUnixMs: 1700000001234,
@@ -20,7 +20,7 @@ func TestThreadMappingStoreSaveLoad(t *testing.T) {
 	if err := store.Save(record); err != nil {
 		t.Fatalf("expected save to succeed, got %v", err)
 	}
-	got, ok, err := store.Load("platform-1")
+	got, ok, err := store.Load("instance-1")
 	if err != nil {
 		t.Fatalf("expected load to succeed, got %v", err)
 	}
@@ -30,7 +30,7 @@ func TestThreadMappingStoreSaveLoad(t *testing.T) {
 	if !reflect.DeepEqual(got, record) {
 		t.Fatalf("unexpected record: %#v", got)
 	}
-	path, err := store.mappingPath("platform-1")
+	path, err := store.mappingPath("instance-1")
 	if err != nil {
 		t.Fatalf("expected mapping path, got %v", err)
 	}
@@ -65,7 +65,7 @@ func TestThreadMappingStoreSaveAtomic(t *testing.T) {
 	homeDir := t.TempDir()
 	store := NewThreadMappingStore(homeDir)
 	original := ThreadMappingRecord{
-		PlatformThreadID: "platform-atomic",
+		InstanceID:       "platform-atomic",
 		CodexThreadID:    "codex-old",
 		CreatedAtUnixMs:  1700000000000,
 		LastUsedAtUnixMs: 1700000000100,
@@ -77,7 +77,7 @@ func TestThreadMappingStoreSaveAtomic(t *testing.T) {
 		return fmt.Errorf("rename failed")
 	}
 	updated := ThreadMappingRecord{
-		PlatformThreadID: "platform-atomic",
+		InstanceID:       "platform-atomic",
 		CodexThreadID:    "codex-new",
 		CreatedAtUnixMs:  1700000000000,
 		LastUsedAtUnixMs: 1700000000200,

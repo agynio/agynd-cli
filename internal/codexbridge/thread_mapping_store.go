@@ -15,15 +15,15 @@ const (
 )
 
 type ThreadMappingRecord struct {
-	PlatformThreadID string `json:"platform_thread_id"`
+	InstanceID       string `json:"instance_id"`
 	CodexThreadID    string `json:"codex_thread_id"`
 	CreatedAtUnixMs  int64  `json:"created_at_unix_ms"`
 	LastUsedAtUnixMs int64  `json:"last_used_at_unix_ms"`
 }
 
 func (r ThreadMappingRecord) validate() error {
-	if r.PlatformThreadID == "" {
-		return fmt.Errorf("platform_thread_id is required")
+	if r.InstanceID == "" {
+		return fmt.Errorf("instance_id is required")
 	}
 	if r.CodexThreadID == "" {
 		return fmt.Errorf("codex_thread_id is required")
@@ -37,8 +37,8 @@ func (r ThreadMappingRecord) validate() error {
 	if r.LastUsedAtUnixMs < r.CreatedAtUnixMs {
 		return fmt.Errorf("last_used_at_unix_ms precedes created_at_unix_ms")
 	}
-	if strings.TrimSpace(r.PlatformThreadID) != r.PlatformThreadID {
-		return fmt.Errorf("platform_thread_id contains whitespace")
+	if strings.TrimSpace(r.InstanceID) != r.InstanceID {
+		return fmt.Errorf("instance_id contains whitespace")
 	}
 	if strings.TrimSpace(r.CodexThreadID) != r.CodexThreadID {
 		return fmt.Errorf("codex_thread_id contains whitespace")
@@ -60,12 +60,12 @@ func NewThreadMappingStore(homeDir string) *ThreadMappingStore {
 	}
 }
 
-func (s *ThreadMappingStore) Load(platformThreadID string) (ThreadMappingRecord, bool, error) {
-	path, err := s.mappingPath(platformThreadID)
+func (s *ThreadMappingStore) Load(instanceID string) (ThreadMappingRecord, bool, error) {
+	path, err := s.mappingPath(instanceID)
 	if err != nil {
 		return ThreadMappingRecord{}, false, err
 	}
-	record, ok, err := s.readRecord(path, platformThreadID)
+	record, ok, err := s.readRecord(path, instanceID)
 	if err != nil {
 		return ThreadMappingRecord{}, false, err
 	}
@@ -79,7 +79,7 @@ func (s *ThreadMappingStore) Save(record ThreadMappingRecord) error {
 	if err := record.validate(); err != nil {
 		return fmt.Errorf("invalid mapping: %w", err)
 	}
-	path, err := s.mappingPath(record.PlatformThreadID)
+	path, err := s.mappingPath(record.InstanceID)
 	if err != nil {
 		return err
 	}
@@ -120,11 +120,11 @@ func (s *ThreadMappingStore) Save(record ThreadMappingRecord) error {
 	return nil
 }
 
-func (s *ThreadMappingStore) mappingPath(platformThreadID string) (string, error) {
-	return mappingPath(s.dir, platformThreadID)
+func (s *ThreadMappingStore) mappingPath(instanceID string) (string, error) {
+	return mappingPath(s.dir, instanceID)
 }
 
-func (s *ThreadMappingStore) readRecord(path, platformThreadID string) (ThreadMappingRecord, bool, error) {
+func (s *ThreadMappingStore) readRecord(path, instanceID string) (ThreadMappingRecord, bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -139,13 +139,13 @@ func (s *ThreadMappingStore) readRecord(path, platformThreadID string) (ThreadMa
 	if err := record.validate(); err != nil {
 		return ThreadMappingRecord{}, false, fmt.Errorf("invalid mapping: %w", err)
 	}
-	if record.PlatformThreadID != platformThreadID {
-		return ThreadMappingRecord{}, false, fmt.Errorf("mapping platform_thread_id mismatch")
+	if record.InstanceID != instanceID {
+		return ThreadMappingRecord{}, false, fmt.Errorf("mapping instance_id mismatch")
 	}
 	return record, true, nil
 }
 
-func mappingPath(dir, platformThreadID string) (string, error) {
+func mappingPath(dir, instanceID string) (string, error) {
 	dir = strings.TrimSpace(dir)
 	if dir == "" {
 		return "", fmt.Errorf("mapping directory is required")
@@ -153,12 +153,12 @@ func mappingPath(dir, platformThreadID string) (string, error) {
 	if !filepath.IsAbs(dir) {
 		return "", fmt.Errorf("mapping directory %q must be absolute", dir)
 	}
-	platformThreadID = strings.TrimSpace(platformThreadID)
-	if platformThreadID == "" {
-		return "", fmt.Errorf("platform thread id is required")
+	instanceID = strings.TrimSpace(instanceID)
+	if instanceID == "" {
+		return "", fmt.Errorf("instance id is required")
 	}
-	if strings.ContainsRune(platformThreadID, filepath.Separator) || filepath.Base(platformThreadID) != platformThreadID {
-		return "", fmt.Errorf("platform thread id %q is invalid", platformThreadID)
+	if strings.ContainsRune(instanceID, filepath.Separator) || filepath.Base(instanceID) != instanceID {
+		return "", fmt.Errorf("instance id %q is invalid", instanceID)
 	}
-	return filepath.Join(dir, platformThreadID+".json"), nil
+	return filepath.Join(dir, instanceID+".json"), nil
 }

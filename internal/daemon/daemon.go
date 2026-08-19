@@ -830,7 +830,7 @@ func (d *Daemon) handleCodexMessage(ctx context.Context, message platform.Messag
 	if err != nil {
 		return err
 	}
-	codexThreadID, err := d.ensureCodexThread(ctx, threadID)
+	codexThreadID, err := d.ensureCodexThread(ctx)
 	if err != nil {
 		return err
 	}
@@ -972,22 +972,33 @@ func (d *Daemon) readCodexTurnMessageOnce(ctx context.Context, codexThreadID, tu
 	return "", fmt.Errorf("codex turn %s not found in thread %s", turnID, codexThreadID)
 }
 
-func (d *Daemon) ensureCodexThread(ctx context.Context, platformThreadID string) (string, error) {
+// ensureCodexThread returns the codex thread this instance talks in, resuming
+// it after a restart and starting one the first time.
+//
+// The instance, not the thread. Agent state is instance-scoped -- an instance
+// serves many threads and they share one conversation -- and keying it by
+// thread meant a reply arriving on another thread began a conversation with no
+// memory of the one that started it: an agent that asked another agent a
+// question could not read the answer in context. Which thread a message came
+// from is in its header. The agn path was keyed this way in #161; this is the
+// same change for codex.
+func (d *Daemon) ensureCodexThread(ctx context.Context) (string, error) {
 	if d.mappingStore == nil {
 		return "", fmt.Errorf("codex mapping store is not configured")
 	}
-	if record, ok := d.mapping.RecordForPlatform(platformThreadID); ok {
+	instanceID := d.selfID()
+	if record, ok := d.mapping.RecordForInstance(instanceID); ok {
 		updated := record
 		updated.LastUsedAtUnixMs = time.Now().UnixMilli()
 		d.mapping.SetRecord(updated)
 		if err := d.mappingStore.Save(updated); err != nil {
-			return "", fmt.Errorf("save codex thread mapping for platform thread %s: %w", platformThreadID, err)
+			return "", fmt.Errorf("save codex thread mapping for instance %s: %w", instanceID, err)
 		}
 		return record.CodexThreadID, nil
 	}
-	record, ok, err := d.mappingStore.Load(platformThreadID)
+	record, ok, err := d.mappingStore.Load(instanceID)
 	if err != nil {
-		return "", fmt.Errorf("load codex thread mapping for platform thread %s: %w", platformThreadID, err)
+		return "", fmt.Errorf("load codex thread mapping for instance %s: %w", instanceID, err)
 	}
 	if ok {
 		if err := d.resumeCodexThread(ctx, record.CodexThreadID); err != nil {
@@ -996,7 +1007,7 @@ func (d *Daemon) ensureCodexThread(ctx context.Context, platformThreadID string)
 		record.LastUsedAtUnixMs = time.Now().UnixMilli()
 		d.mapping.SetRecord(record)
 		if err := d.mappingStore.Save(record); err != nil {
-			return "", fmt.Errorf("save codex thread mapping for platform thread %s: %w", platformThreadID, err)
+			return "", fmt.Errorf("save codex thread mapping for instance %s: %w", instanceID, err)
 		}
 		return record.CodexThreadID, nil
 	}
@@ -1006,14 +1017,14 @@ func (d *Daemon) ensureCodexThread(ctx context.Context, platformThreadID string)
 	}
 	now := time.Now().UnixMilli()
 	newRecord := codexbridge.ThreadMappingRecord{
-		PlatformThreadID: platformThreadID,
+		InstanceID:       instanceID,
 		CodexThreadID:    codexThreadID,
 		CreatedAtUnixMs:  now,
 		LastUsedAtUnixMs: now,
 	}
 	d.mapping.SetRecord(newRecord)
 	if err := d.mappingStore.Save(newRecord); err != nil {
-		return "", fmt.Errorf("save codex thread mapping for platform thread %s: %w", platformThreadID, err)
+		return "", fmt.Errorf("save codex thread mapping for instance %s: %w", instanceID, err)
 	}
 	return codexThreadID, nil
 }
