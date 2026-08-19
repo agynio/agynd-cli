@@ -96,7 +96,7 @@ func (f *fakeCodexClient) Close() error {
 func TestEnsureCodexThreadResumesFromStore(t *testing.T) {
 	store := codexbridge.NewThreadMappingStore(t.TempDir())
 	record := codexbridge.ThreadMappingRecord{
-		PlatformThreadID: "platform-1",
+		InstanceID:       testAgentID,
 		CodexThreadID:    "codex-1",
 		CreatedAtUnixMs:  1700000000000,
 		LastUsedAtUnixMs: 1700000000100,
@@ -107,13 +107,13 @@ func TestEnsureCodexThreadResumesFromStore(t *testing.T) {
 	client := &fakeCodexClient{}
 	daemon := &Daemon{
 		sdk:          SDKCodex,
-		cfg:          config.Config{WorkDir: "/tmp"},
+		cfg:          config.Config{AgentID: uuid.MustParse(testAgentID), WorkDir: "/tmp"},
 		codex:        client,
 		mapping:      codexbridge.NewThreadMapping(),
 		mappingStore: store,
 		agent:        &agentsv1.Agent{},
 	}
-	threadID, err := daemon.ensureCodexThread(context.Background(), record.PlatformThreadID)
+	threadID, err := daemon.ensureCodexThread(context.Background())
 	if err != nil {
 		t.Fatalf("expected ensureCodexThread to succeed, got %v", err)
 	}
@@ -136,13 +136,13 @@ func TestEnsureCodexThreadStartsNonEphemeral(t *testing.T) {
 	client := &fakeCodexClient{}
 	daemon := &Daemon{
 		sdk:          SDKCodex,
-		cfg:          config.Config{WorkDir: "/tmp"},
+		cfg:          config.Config{AgentID: uuid.MustParse(testAgentID), WorkDir: "/tmp"},
 		codex:        client,
 		mapping:      codexbridge.NewThreadMapping(),
 		mappingStore: store,
 		agent:        &agentsv1.Agent{},
 	}
-	threadID, err := daemon.ensureCodexThread(context.Background(), "platform-new")
+	threadID, err := daemon.ensureCodexThread(context.Background())
 	if err != nil {
 		t.Fatalf("expected ensureCodexThread to succeed, got %v", err)
 	}
@@ -161,7 +161,7 @@ func TestEnsureCodexThreadStartsNonEphemeral(t *testing.T) {
 	if *client.startParams.Ephemeral {
 		t.Fatal("expected Ephemeral to be false")
 	}
-	stored, ok, err := store.Load("platform-new")
+	stored, ok, err := store.Load(testAgentID)
 	if err != nil {
 		t.Fatalf("expected mapping to be saved, got %v", err)
 	}
@@ -592,5 +592,45 @@ func TestHandleCodexMessageEmptyTurnAcksWithoutPosting(t *testing.T) {
 	}
 	if len(threadsClient.ackRequests) != 1 {
 		t.Fatalf("expected the message to be acked, got %d ack requests", len(threadsClient.ackRequests))
+	}
+}
+
+// An instance serves many threads and they share one conversation. Keyed by
+// thread, a coordinator that asked three agents a question woke on each reply
+// in a conversation that had never seen the question.
+func TestEnsureCodexThreadIsOneConversationAcrossThreads(t *testing.T) {
+	store := codexbridge.NewThreadMappingStore(t.TempDir())
+	client := &fakeCodexClient{}
+	daemon := &Daemon{
+		sdk:          SDKCodex,
+		cfg:          config.Config{AgentID: uuid.MustParse(testAgentID), WorkDir: "/tmp"},
+		codex:        client,
+		mapping:      codexbridge.NewThreadMapping(),
+		mappingStore: store,
+		agent:        &agentsv1.Agent{},
+	}
+
+	first, err := daemon.ensureCodexThread(context.Background())
+	if err != nil {
+		t.Fatalf("expected ensureCodexThread to succeed, got %v", err)
+	}
+	// A reply arriving on some other platform thread reaches the same instance.
+	second, err := daemon.ensureCodexThread(context.Background())
+	if err != nil {
+		t.Fatalf("expected ensureCodexThread to succeed, got %v", err)
+	}
+
+	if first != second {
+		t.Fatalf("expected one codex thread for the instance, got %q and %q", first, second)
+	}
+	if client.startThreadCalls != 1 {
+		t.Fatalf("expected exactly one codex thread to be started, got %d", client.startThreadCalls)
+	}
+	stored, ok, err := store.Load(testAgentID)
+	if err != nil || !ok {
+		t.Fatalf("expected the mapping to be stored under the instance, got ok=%v err=%v", ok, err)
+	}
+	if stored.CodexThreadID != first {
+		t.Fatalf("expected stored codex id %q, got %q", first, stored.CodexThreadID)
 	}
 }
