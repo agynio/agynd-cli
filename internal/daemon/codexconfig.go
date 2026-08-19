@@ -51,6 +51,7 @@ const (
 	traceHookFormatEnv   = "AGYN_TRACE_FORMAT"
 	traceHookAddressEnv  = "TRACING_ADDRESS"
 	traceHookTraceEnv    = "AGYN_TRACE_ID"
+	traceparentEnv       = "TRACEPARENT"
 	traceHookWorkloadEnv = "WORKLOAD_ID"
 
 	traceFormatCodex  = "codex"
@@ -225,6 +226,19 @@ func codexEnv(cfg config.Config, codexHome, codexHomeValue string) map[string]st
 // so agynd stays the one that decides what a trace is.
 func traceHookTraceID(workloadID string) string {
 	return hex.EncodeToString(tracing.TraceID(workloadID))
+}
+
+// traceparentFor is the same trace in the W3C spelling, for a CLI that reports
+// its own spans and reads a parent the way any OTel process does.
+//
+// The span id is the trace's first eight bytes rather than one drawn per call.
+// Nothing here opens a span for agn to hang off, and a parent that changed
+// between two starts of the same workload would leave the second cycle's turns
+// pointing at something that never existed -- the same reason the trace id is
+// derived from WORKLOAD_ID rather than drawn.
+func traceparentFor(workloadID string) string {
+	traceID := tracing.TraceID(workloadID)
+	return "00-" + hex.EncodeToString(traceID) + "-" + hex.EncodeToString(traceID[:8]) + "-01"
 }
 
 func zitiNoProxyValue(values ...string) string {

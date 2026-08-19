@@ -74,6 +74,11 @@ func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daem
 		Env: []string{
 			"PATH=" + agentPathValue(),
 			"AGN_CONFIG_PATH=" + configPath,
+			// agn reports its own turns rather than having a transcript read
+			// back, so it is handed the same trace the hook is given for the
+			// other CLIs. Without it agn rooted its spans itself, and the
+			// message and the model call it caused landed in separate traces.
+			traceparentEnv + "=" + traceparentFor(cfg.WorkloadID),
 		},
 	})
 	if err != nil {
