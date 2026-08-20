@@ -398,6 +398,7 @@ base_url = %q
 request_max_retries = 0
 stream_max_retries = 0
 supports_websockets = false
+mcp_oauth_credentials_store = "file"
 `, baseURL, apiKeyEnv)
 }
 
@@ -446,5 +447,21 @@ func TestWriteCodexConfigSurvivesAnUnwritableSystemConfig(t *testing.T) {
 
 	if _, err := writeCodexConfig(config.Config{LLMBaseURL: "https://example.com"}); err != nil {
 		t.Fatalf("expected the config to be written anyway, got %v", err)
+	}
+}
+
+// A workload has no keyring, and codex's default MCP credential store is the OS
+// secret service. Without this the servers are configured, reachable, and
+// register no tools at all -- the model is offered `shell` alone and any MCP
+// call comes back "unsupported call".
+func TestCodexConfigStoresMCPCredentialsInAFile(t *testing.T) {
+	payload := codexConfig(config.Config{LLMBaseURL: "https://example.com"})
+	if !strings.Contains(payload, `mcp_oauth_credentials_store = "file"`) {
+		t.Fatalf("expected a file credential store in the platform config, got %q", payload)
+	}
+
+	native := codexConfig(config.Config{LLMBaseURL: "https://example.com", LLMNative: true})
+	if !strings.Contains(native, `mcp_oauth_credentials_store = "file"`) {
+		t.Fatalf("expected a file credential store in the native config, got %q", native)
 	}
 }
