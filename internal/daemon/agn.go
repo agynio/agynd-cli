@@ -22,11 +22,6 @@ func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daem
 	}
 	cfg = updatedCfg
 
-	if _, err := writeSkills(cfg.SDK, setup.skills); err != nil {
-		_ = setup.gatewayConn.Close()
-		return nil, err
-	}
-
 	agentConfig, err := parseAgentConfiguration(setup.agent.GetConfiguration())
 	if err != nil {
 		_ = setup.gatewayConn.Close()
