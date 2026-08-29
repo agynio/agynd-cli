@@ -97,6 +97,12 @@ var codexSystemConfigPath = "/etc/codex/config.toml"
 const codexCredentialsStore = `mcp_oauth_credentials_store = "file"
 `
 
+// A turn reaches the platform over the overlay, and a connection that served
+// one turn may be gone by the next: the tunnel closes its circuit and the next
+// request goes into it before anything notices. Refusing to retry made that
+// fatal -- the tool call would run and the turn that should have reported it
+// died on the way out, with nothing posted to the thread. Two is small enough
+// that a provider genuinely refusing is still reported rather than hammered.
 const codexConfigTemplate = `model_provider = "platform"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
@@ -105,8 +111,8 @@ sandbox_mode = "danger-full-access"
 name = "Agyn LLM"
 base_url = %q
 %swire_api = "responses"
-request_max_retries = 0
-stream_max_retries = 0
+request_max_retries = 2
+stream_max_retries = 2
 supports_websockets = false
 `
 

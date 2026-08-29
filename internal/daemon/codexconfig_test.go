@@ -395,8 +395,8 @@ sandbox_mode = "danger-full-access"
 name = "Agyn LLM"
 base_url = %q
 %swire_api = "responses"
-request_max_retries = 0
-stream_max_retries = 0
+request_max_retries = 2
+stream_max_retries = 2
 supports_websockets = false
 mcp_oauth_credentials_store = "file"
 `, baseURL, apiKeyEnv)
