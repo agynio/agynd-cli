@@ -25,6 +25,7 @@ import (
 	"github.com/agynio/agynd-cli/internal/platform"
 	"github.com/agynio/agynd-cli/internal/subscriber"
 	"github.com/agynio/agynd-cli/internal/tracing"
+	"github.com/agynio/agynd-cli/internal/tracingproxy"
 	claude "github.com/agynio/claude-sdk-go"
 	codex "github.com/agynio/codex-sdk-go"
 	"github.com/google/uuid"
@@ -98,6 +99,7 @@ type Daemon struct {
 	claude        claudeClient
 	agent         *agentsv1.Agent
 	tracing       *tracing.Exporter
+	tracingProxy  *tracingproxy.Proxy
 	claudeReadyMu sync.Mutex
 	claudeReady   bool
 	mcpReadyMu    sync.Mutex
@@ -480,6 +482,9 @@ func (d *Daemon) Close() {
 	}
 	if d.tracing != nil {
 		_ = d.tracing.Close()
+	}
+	if d.tracingProxy != nil {
+		d.tracingProxy.Close()
 	}
 	if d.gatewayConn != nil {
 		_ = d.gatewayConn.Close()

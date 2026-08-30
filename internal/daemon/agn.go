@@ -10,6 +10,7 @@ import (
 	"github.com/agynio/agynd-cli/internal/platform"
 	"github.com/agynio/agynd-cli/internal/subscriber"
 	"github.com/agynio/agynd-cli/internal/tracing"
+	"github.com/agynio/agynd-cli/internal/tracingproxy"
 )
 
 func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daemon, error) {
@@ -64,17 +65,14 @@ func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daem
 		return nil, err
 	}
 
-	agnClient, err := agnsdk.Start(ctx, agnsdk.Options{
-		BinaryPath: cfg.AgentBinary,
-		Env: []string{
-			"PATH=" + agentPathValue(),
-			"AGN_CONFIG_PATH=" + configPath,
-			// agn reports its own turns rather than having a transcript read
-			// back, so it is handed the same trace the hook is given for the
-			// other CLIs. Without it agn rooted its spans itself, and the
-			// message and the model call it caused landed in separate traces.
-			traceparentEnv + "=" + traceparentFor(cfg.WorkloadID),
-		},
+	// agn reports its own turns rather than keeping a transcript to read back,
+	// so its spans arrive over OTLP and need something listening for them. The
+	// hook the other CLIs use never runs here, and the daemon exports only the
+	// invocation message -- without this the model call is never exported.
+	tracingProxy, err := tracingproxy.Start(ctx, tracingproxy.Config{
+		TracingAddress: cfg.TracingAddress,
+		ThreadID:       cfg.ThreadID,
+		WorkloadID:     cfg.WorkloadID,
 	})
 	if err != nil {
 		_ = tracingExporter.Close()
@@ -82,20 +80,42 @@ func newAgnDaemon(ctx context.Context, cfg config.Config, version string) (*Daem
 		return nil, err
 	}
 
+	agnClient, err := agnsdk.Start(ctx, agnsdk.Options{
+		BinaryPath: cfg.AgentBinary,
+		Env: []string{
+			"PATH=" + agentPathValue(),
+			"AGN_CONFIG_PATH=" + configPath,
+			// Its own listener rather than whatever the workload was handed:
+			// the proxy stamps the thread and workload onto what it forwards.
+			"OTEL_EXPORTER_OTLP_ENDPOINT=http://" + tracingProxy.Address(),
+			// Handed the same trace the hook is given for the other CLIs.
+			// Without it agn rooted its spans itself, and the message and the
+			// model call it caused landed in separate traces.
+			traceparentEnv + "=" + traceparentFor(cfg.WorkloadID),
+		},
+	})
+	if err != nil {
+		tracingProxy.Close()
+		_ = tracingExporter.Close()
+		_ = setup.gatewayConn.Close()
+		return nil, err
+	}
+
 	return &Daemon{
-		cfg:         cfg,
-		sdk:         SDKAgn,
-		gatewayConn: setup.gatewayConn,
-		threads:     setup.threads,
-		agents:      setup.agents,
-		agentInbox:  setup.agentInbox,
-		runners:     setup.runners,
-		subscriber:  subscriber.New(setup.notifications, cfg.ThreadID),
-		consumer:    platform.NewInboxConsumer(setup.agentInbox, pageSize, pageTimeout),
-		agn:         agnClient,
-		agent:       setup.agent,
-		tracing:     tracingExporter,
-		mcpReady:    true,
+		cfg:          cfg,
+		sdk:          SDKAgn,
+		gatewayConn:  setup.gatewayConn,
+		threads:      setup.threads,
+		agents:       setup.agents,
+		agentInbox:   setup.agentInbox,
+		runners:      setup.runners,
+		subscriber:   subscriber.New(setup.notifications, cfg.ThreadID),
+		consumer:     platform.NewInboxConsumer(setup.agentInbox, pageSize, pageTimeout),
+		agn:          agnClient,
+		agent:        setup.agent,
+		tracing:      tracingExporter,
+		tracingProxy: tracingProxy,
+		mcpReady:     true,
 	}, nil
 }
 
