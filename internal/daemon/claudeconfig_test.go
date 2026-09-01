@@ -56,7 +56,7 @@ func TestWriteClaudeSettings(t *testing.T) {
 		Theme:                             "dark",
 		Env: map[string]string{
 			"ANTHROPIC_BASE_URL":                       baseURL,
-			"ANTHROPIC_API_KEY":                        apiKey,
+			"ANTHROPIC_AUTH_TOKEN":                     apiKey,
 			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
 			"DISABLE_AUTOUPDATER":                      "1",
 		},
@@ -116,7 +116,7 @@ func TestWriteClaudeSettingsWithMCPServers(t *testing.T) {
 		Theme:                             "dark",
 		Env: map[string]string{
 			"ANTHROPIC_BASE_URL":                       baseURL,
-			"ANTHROPIC_API_KEY":                        apiKey,
+			"ANTHROPIC_AUTH_TOKEN":                     apiKey,
 			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
 			"DISABLE_AUTOUPDATER":                      "1",
 		},
