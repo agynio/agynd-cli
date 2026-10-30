@@ -26,6 +26,9 @@ type fakeRunnersGatewayClient struct {
 
 	touchReq *runnersv1.TouchWorkloadRequest
 	touchErr error
+
+	reportReq *runnersv1.ReportWorkloadIdleRequest
+	reportErr error
 }
 
 func (f *fakeRunnersGatewayClient) ListWorkloadsByThread(ctx context.Context, in *runnersv1.ListWorkloadsByThreadRequest, opts ...grpc.CallOption) (*runnersv1.ListWorkloadsByThreadResponse, error) {
@@ -42,6 +45,14 @@ func (f *fakeRunnersGatewayClient) TouchWorkload(ctx context.Context, in *runner
 		return nil, f.touchErr
 	}
 	return &runnersv1.TouchWorkloadResponse{}, nil
+}
+
+func (f *fakeRunnersGatewayClient) ReportWorkloadIdle(ctx context.Context, in *runnersv1.ReportWorkloadIdleRequest, opts ...grpc.CallOption) (*runnersv1.ReportWorkloadIdleResponse, error) {
+	f.reportReq = in
+	if f.reportErr != nil {
+		return nil, f.reportErr
+	}
+	return &runnersv1.ReportWorkloadIdleResponse{}, nil
 }
 
 func TestWorkloadFromProtoValid(t *testing.T) {
@@ -187,6 +198,36 @@ func TestRunnersTouchWorkloadWrapsError(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 	if !strings.Contains(err.Error(), "touch workload") {
+		t.Fatalf("missing operation context: %v", err)
+	}
+}
+
+func TestRunnersReportWorkloadIdle(t *testing.T) {
+	fake := &fakeRunnersGatewayClient{}
+	client := NewRunners(fake)
+	if err := client.ReportWorkloadIdle(context.Background(), "workload-1"); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if fake.reportReq == nil || fake.reportReq.GetId() != "workload-1" {
+		t.Fatalf("unexpected report request: %+v", fake.reportReq)
+	}
+}
+
+func TestRunnersReportWorkloadIdleValidation(t *testing.T) {
+	client := NewRunners(&fakeRunnersGatewayClient{})
+	if err := client.ReportWorkloadIdle(context.Background(), " "); err == nil {
+		t.Fatal("expected error for missing workload id")
+	}
+}
+
+func TestRunnersReportWorkloadIdleWrapsError(t *testing.T) {
+	fake := &fakeRunnersGatewayClient{reportErr: fmt.Errorf("rpc failed")}
+	client := NewRunners(fake)
+	err := client.ReportWorkloadIdle(context.Background(), "workload-1")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "report workload idle") {
 		t.Fatalf("missing operation context: %v", err)
 	}
 }

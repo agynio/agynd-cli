@@ -12,13 +12,20 @@ import (
 )
 
 type fakeRunnersClient struct {
-	touchCalls []string
-	err        error
+	touchCalls  []string
+	err         error
+	reportCalls []string
+	reportErr   error
 }
 
 func (f *fakeRunnersClient) TouchWorkload(_ context.Context, workloadID string) error {
 	f.touchCalls = append(f.touchCalls, workloadID)
 	return f.err
+}
+
+func (f *fakeRunnersClient) ReportWorkloadIdle(_ context.Context, workloadID string) error {
+	f.reportCalls = append(f.reportCalls, workloadID)
+	return f.reportErr
 }
 
 func TestTouchActiveWorkloadCallsTouch(t *testing.T) {
@@ -82,6 +89,21 @@ func TestTouchActiveWorkloadSkipsWhenIdle(t *testing.T) {
 		t.Fatalf("unexpected touch calls: %v", fake.touchCalls)
 	}
 }
+
+// Without a workload there is nothing to report on, as there is nothing to
+// touch.
+func TestReportWorkloadIdleSkipsWhenMissingWorkloadID(t *testing.T) {
+	fake := &fakeRunnersClient{}
+	daemon := &Daemon{
+		cfg:     config.Config{AgentID: uuid.MustParse(testAgentID), WorkloadID: ""},
+		runners: fake,
+	}
+	daemon.reportWorkloadIdle(context.Background())
+	if len(fake.reportCalls) != 0 {
+		t.Fatalf("unexpected report calls: %v", fake.reportCalls)
+	}
+}
+
 func TestTouchActiveWorkloadSkipsWhenMissingWorkloadID(t *testing.T) {
 	fake := &fakeRunnersClient{}
 	daemon := &Daemon{

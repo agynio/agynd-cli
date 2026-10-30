@@ -129,6 +129,7 @@ type claudeClient interface {
 
 type runnersClient interface {
 	TouchWorkload(ctx context.Context, workloadID string) error
+	ReportWorkloadIdle(ctx context.Context, workloadID string) error
 }
 
 type messageSubscriber interface {
@@ -793,7 +794,15 @@ func (d *Daemon) syncMessages(ctx context.Context) error {
 		if err := d.ensureMCPReady(ctx); err != nil {
 			return fmt.Errorf("wait for MCP servers before processing message %s: %w", message.ID, err)
 		}
-		return d.handleMessage(ctx, message)
+		if err := d.handleMessage(ctx, message); err != nil {
+			return err
+		}
+		// The turn is over: every handler acks the item as its last act and
+		// returns nil only once it has. The report follows the ack, never
+		// precedes it, so a workload is never frozen between finishing an
+		// item and acknowledging it.
+		d.reportWorkloadIdle(ctx)
+		return nil
 	}); err != nil {
 		var pageFetchErr *platform.PageFetchError
 		if !errors.As(err, &pageFetchErr) {

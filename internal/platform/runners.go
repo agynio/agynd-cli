@@ -62,6 +62,21 @@ func (r *Runners) TouchWorkload(ctx context.Context, workloadID string) error {
 	return nil
 }
 
+// ReportWorkloadIdle tells Runners the agent has finished a turn. Where
+// TouchWorkload says the agent is busy, this says it has stopped being, the
+// moment it is true rather than a keepalive grace later.
+func (r *Runners) ReportWorkloadIdle(ctx context.Context, workloadID string) error {
+	workloadID = strings.TrimSpace(workloadID)
+	if workloadID == "" {
+		return fmt.Errorf("workload id is required")
+	}
+	_, err := r.client.ReportWorkloadIdle(ctx, &runnersv1.ReportWorkloadIdleRequest{Id: workloadID})
+	if err != nil {
+		return fmt.Errorf("report workload idle: %w", err)
+	}
+	return nil
+}
+
 func workloadFromProto(workload *runnersv1.Workload) (Workload, error) {
 	if workload == nil {
 		return Workload{}, fmt.Errorf("workload is required")
