@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -107,7 +108,14 @@ type Daemon struct {
 
 	processing     atomic.Bool
 	processingWake chan struct{}
-	syncMu         sync.Mutex
+	// wakeSync asks Run for an inbox read after a wake from hibernation. One
+	// pending read is as good as any number, so it holds one.
+	wakeSync chan struct{}
+	syncMu   sync.Mutex
+
+	// Left unset outside tests: the real clocks and the real tick.
+	clocks            func() clockReading
+	keepaliveInterval time.Duration
 }
 
 type platformConn interface {
@@ -135,6 +143,7 @@ type messageSubscriber interface {
 	Run(ctx context.Context) error
 	Started() <-chan struct{}
 	Wake() <-chan struct{}
+	Resubscribe()
 }
 
 type messageConsumer interface {
@@ -491,17 +500,22 @@ func (d *Daemon) Close() {
 	}
 }
 
-func (d *Daemon) Run(ctx context.Context) error {
+// Run serves the inbox until ctx ends. wake carries the runner's SIGCONT, its
+// cue that the workload has been woken from hibernation; nil never fires.
+func (d *Daemon) Run(ctx context.Context, wake <-chan os.Signal) error {
 	// Before either mode. A sandbox is the workload persistent shells exist
 	// for, but the server is cheap and the alternative is a second place where
 	// a shell's environment could differ.
 	startShellServer(ctx)
 
 	if d.sdk == config.ModeHolder {
-		return runHolder(ctx, d.agents, d.cfg.EnvironmentID, d.cfg.WorkDir)
+		return runHolder(ctx, wake, d.agents, d.cfg.EnvironmentID, d.cfg.WorkDir)
 	}
 	d.ensureProcessingWake()
-	go d.runKeepalive(ctx)
+	if d.wakeSync == nil {
+		d.wakeSync = make(chan struct{}, 1)
+	}
+	go d.runKeepalive(ctx, wake)
 
 	go func() {
 		if err := d.subscriber.Run(ctx); err != nil && ctx.Err() == nil {
@@ -562,34 +576,38 @@ func (d *Daemon) Run(ctx context.Context) error {
 		scheduleFailureRetry(operation, err)
 		return nil
 	}
-
-	if err := d.syncMessages(ctx); err != nil {
-		if terminalErr := handleSyncFailure("initial sync messages", err); terminalErr != nil {
-			return terminalErr
+	syncInbox := func(operation string) error {
+		if err := d.syncMessages(ctx); err != nil {
+			return handleSyncFailure(operation, err)
 		}
-	} else {
 		clearRetry()
+		return nil
+	}
+
+	if err := syncInbox("initial sync messages"); err != nil {
+		return err
 	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return operationError(opProcessSignalShutdown, 0, ctx.Err())
+		case <-d.wakeSync:
+			// Woken from hibernation. What arrived while the workload slept is
+			// in the inbox, and the stream that would have announced it died
+			// with the sleep, so the inbox is read once without waiting on a
+			// notification. The items are processed as a normal turn; nothing
+			// is replayed to the agent CLI.
+			if err := syncInbox("wake sync messages"); err != nil {
+				return err
+			}
 		case <-d.subscriber.Wake():
-			if err := d.syncMessages(ctx); err != nil {
-				if terminalErr := handleSyncFailure("sync messages", err); terminalErr != nil {
-					return terminalErr
-				}
-			} else {
-				clearRetry()
+			if err := syncInbox("sync messages"); err != nil {
+				return err
 			}
 		case <-retry:
-			if err := d.syncMessages(ctx); err != nil {
-				if terminalErr := handleSyncFailure("sync messages retry", err); terminalErr != nil {
-					return terminalErr
-				}
-			} else {
-				clearRetry()
+			if err := syncInbox("sync messages retry"); err != nil {
+				return err
 			}
 		}
 	}

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -41,10 +42,11 @@ func testConfig(sdk string) config.Config {
 }
 
 type fakeMessageSubscriber struct {
-	runStarted chan struct{}
-	releaseRun chan struct{}
-	wake       chan struct{}
-	runOnce    sync.Once
+	runStarted   chan struct{}
+	releaseRun   chan struct{}
+	wake         chan struct{}
+	runOnce      sync.Once
+	resubscribed atomic.Int32
 }
 
 func newFakeMessageSubscriber() *fakeMessageSubscriber {
@@ -75,6 +77,10 @@ func (f *fakeMessageSubscriber) Ready() <-chan struct{} {
 
 func (f *fakeMessageSubscriber) Wake() <-chan struct{} {
 	return f.wake
+}
+
+func (f *fakeMessageSubscriber) Resubscribe() {
+	f.resubscribed.Add(1)
 }
 
 type fakeMessageConsumer struct {
@@ -339,7 +345,7 @@ func TestRunStartsKeepaliveAndSubscriberBeforeInitialSync(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- daemon.Run(ctx)
+		errCh <- daemon.Run(ctx, nil)
 	}()
 
 	select {
@@ -385,7 +391,7 @@ func TestRunInitialSyncProceedsWhenSubscriberNotReady(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- daemon.Run(ctx)
+		errCh <- daemon.Run(ctx, nil)
 	}()
 
 	select {
@@ -424,7 +430,7 @@ func TestRunWrapsShutdownCancellation(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- daemon.Run(ctx)
+		errCh <- daemon.Run(ctx, nil)
 	}()
 
 	select {
@@ -465,7 +471,7 @@ func TestRunRetriesSyncAfterFailure(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- daemon.Run(ctx)
+		errCh <- daemon.Run(ctx, nil)
 	}()
 
 	deadline := time.After(1500 * time.Millisecond)
@@ -476,6 +482,65 @@ func TestRunRetriesSyncAfterFailure(t *testing.T) {
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
+	cancel()
+	select {
+	case <-errCh:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Run did not stop")
+	}
+}
+
+// A wake from hibernation reopens the subscription and reads the inbox once:
+// what arrived during the sleep is in the inbox, and the stream that would
+// have announced it is dead on the far side.
+func TestRunWakeResubscribesAndReadsInbox(t *testing.T) {
+	subscriber := newFakeMessageSubscriber()
+	consumer := &fakeMessageConsumer{}
+	wake := make(chan os.Signal, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	daemon := &Daemon{
+		cfg:        config.Config{AgentID: uuid.MustParse(testAgentID)},
+		runners:    &fakeRunnersClient{},
+		subscriber: subscriber,
+		consumer:   consumer,
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- daemon.Run(ctx, wake)
+	}()
+
+	deadline := time.After(500 * time.Millisecond)
+	for consumer.Calls() < 1 {
+		select {
+		case err := <-errCh:
+			t.Fatalf("Run returned before the initial sync: %v", err)
+		case <-deadline:
+			t.Fatal("initial sync did not run")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if got := subscriber.resubscribed.Load(); got != 0 {
+		t.Fatalf("resubscribed %d times before any wake", got)
+	}
+
+	wake <- syscall.SIGCONT
+
+	deadline = time.After(500 * time.Millisecond)
+	for consumer.Calls() < 2 {
+		select {
+		case err := <-errCh:
+			t.Fatalf("Run returned on wake: %v", err)
+		case <-deadline:
+			t.Fatalf("expected an inbox read on wake, got %d sync calls", consumer.Calls())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if got := subscriber.resubscribed.Load(); got != 1 {
+		t.Fatalf("expected one resubscribe on wake, got %d", got)
+	}
+
 	cancel()
 	select {
 	case <-errCh:
@@ -506,7 +571,7 @@ func TestRunReturnsTerminalCodexTurnFailureWithoutRetry(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- daemon.Run(ctx)
+		errCh <- daemon.Run(ctx, nil)
 	}()
 
 	deadline := time.After(500 * time.Millisecond)
@@ -578,7 +643,7 @@ func TestRunRetriesTransientCodexStreamFailure(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- daemon.Run(ctx)
+		errCh <- daemon.Run(ctx, nil)
 	}()
 
 	select {
@@ -679,7 +744,7 @@ func TestRunRetriesReadbackTransportFailure(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- d.Run(ctx)
+		errCh <- d.Run(ctx, nil)
 	}()
 
 	waitForStartTurn := func() {
@@ -814,7 +879,7 @@ func runHolderModeAndAssertWorkDir(t *testing.T, cfg config.Config, expectedWork
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- daemon.Run(ctx)
+		errCh <- daemon.Run(ctx, nil)
 	}()
 
 	waitForWorkDir(t, errCh, expectedWorkDir)
@@ -856,7 +921,7 @@ func runHolderModeAndAssertChdir(t *testing.T, cfg config.Config, expectedWorkDi
 	defer cancel()
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- daemon.Run(ctx)
+		errCh <- daemon.Run(ctx, nil)
 	}()
 
 	select {

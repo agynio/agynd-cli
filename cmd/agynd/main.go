@@ -17,6 +17,11 @@ var version = "dev"
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// SIGCONT is the runner's wake after hibernation. It has to be asked for:
+	// as a container's init, agynd never sees a signal it has no handler for.
+	wake := make(chan os.Signal, 1)
+	signal.Notify(wake, syscall.SIGCONT)
+	defer signal.Stop(wake)
 
 	cfg, err := config.FromEnv()
 	if err != nil {
@@ -29,7 +34,7 @@ func main() {
 	}
 	defer agynd.Close()
 
-	if err := agynd.Run(ctx); err != nil {
+	if err := agynd.Run(ctx, wake); err != nil {
 		if errors.Is(err, context.Canceled) {
 			log.Printf("daemon stopped: %v", err)
 			return
