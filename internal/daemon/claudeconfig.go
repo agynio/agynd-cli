@@ -104,7 +104,13 @@ func writeClaudeSettings(llmBaseURL, apiKey string, mcpServers []config.MCPServe
 	}
 	if !native {
 		settings.Env["ANTHROPIC_BASE_URL"] = llmBaseURL
-		settings.Env["ANTHROPIC_API_KEY"] = apiKey
+		// The gateway token, not an API key. Both satisfy the CLI's demand for
+		// a credential, but an API key is consent-gated -- it stops and asks
+		// whether to trust the key it found, which in a workload nobody answers.
+		// This is the variable meant for a proxy standing in front of the
+		// vendor, and the proxy authorizes the OpenZiti identity rather than
+		// anything sent in a header.
+		settings.Env["ANTHROPIC_AUTH_TOKEN"] = apiKey
 	}
 	if len(mcpServers) > 0 {
 		settings.MCPServers = make(map[string]claudeMCPServer, len(mcpServers))
