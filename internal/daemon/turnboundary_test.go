@@ -152,7 +152,7 @@ func TestHolderModeReportsNoIdle(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
-	go func() { errCh <- daemon.Run(ctx) }()
+	go func() { errCh <- daemon.Run(ctx, nil) }()
 
 	time.Sleep(50 * time.Millisecond)
 	cancel()
