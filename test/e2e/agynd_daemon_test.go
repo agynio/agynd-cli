@@ -372,6 +372,10 @@ func (s agyndRunnersGatewayStub) TouchWorkload(context.Context, *runnersv1.Touch
 	return &runnersv1.TouchWorkloadResponse{}, nil
 }
 
+func (s agyndRunnersGatewayStub) ReportWorkloadIdle(context.Context, *runnersv1.ReportWorkloadIdleRequest) (*runnersv1.ReportWorkloadIdleResponse, error) {
+	return &runnersv1.ReportWorkloadIdleResponse{}, nil
+}
+
 func (s *agyndGatewayStub) assertInitialized(t *testing.T) {
 	t.Helper()
 	s.mu.Lock()

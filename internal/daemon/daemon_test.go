@@ -188,6 +188,10 @@ func (r *recordingRunnersClient) TouchWorkload(_ context.Context, _ string) erro
 	return nil
 }
 
+func (r *recordingRunnersClient) ReportWorkloadIdle(_ context.Context, _ string) error {
+	return nil
+}
+
 type blockingMessageConsumer struct {
 	started           chan struct{}
 	release           chan struct{}
