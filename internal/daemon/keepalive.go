@@ -12,6 +12,7 @@ import (
 const (
 	workloadKeepaliveInterval = 10 * time.Second
 	workloadKeepaliveTimeout  = 5 * time.Second
+	workloadIdleReportTimeout = 5 * time.Second
 )
 
 // runKeepalive is the daemon's heartbeat. It touches the workload once a tick
@@ -81,6 +82,27 @@ func (d *Daemon) runKeepalive(ctx context.Context, wake <-chan os.Signal) {
 			}
 			touch()
 		}
+	}
+}
+
+// reportWorkloadIdle tells Runners the turn is over, once its inbox items are
+// acked. The call flips the workload's agent_state to idle at once rather than
+// after the keepalive grace, and is the moment the Orchestrator may hibernate
+// the workload: between one turn and the next, if the inbox is still empty when
+// it looks. A report that never arrives costs nothing but latency, because the
+// activity sweep reaches the same state on its own schedule, so a failure is
+// logged and never fatal. In holder mode there is no turn, and so no report.
+func (d *Daemon) reportWorkloadIdle(ctx context.Context) {
+	workloadID := strings.TrimSpace(d.cfg.WorkloadID)
+	if workloadID == "" {
+		return
+	}
+	reportCtx, cancel := context.WithTimeout(ctx, workloadIdleReportTimeout)
+	err := d.runners.ReportWorkloadIdle(reportCtx, workloadID)
+	err = operationContextErr(reportCtx, err)
+	cancel()
+	if err != nil && ctx.Err() == nil {
+		log.Printf("report workload %s idle failed: %v", workloadID, err)
 	}
 }
 
