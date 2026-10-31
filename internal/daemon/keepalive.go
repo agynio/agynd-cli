@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 )
@@ -13,31 +14,72 @@ const (
 	workloadKeepaliveTimeout  = 5 * time.Second
 )
 
-func (d *Daemon) runKeepalive(ctx context.Context) {
+// runKeepalive is the daemon's heartbeat. It touches the workload once a tick
+// while a turn runs, which is what keeps the idle timeout off a busy agent,
+// and it is where a wake from hibernation is noticed and acted on, whether the
+// runner's SIGCONT announces it or the clock does. It handles the wake rather
+// than Run because Run is inside the turn for as long as a turn takes, and a
+// wake that lands mid-turn must not wait for the turn to end.
+func (d *Daemon) runKeepalive(ctx context.Context, wake <-chan os.Signal) {
 	workloadID := strings.TrimSpace(d.cfg.WorkloadID)
 	if workloadID == "" {
 		log.Printf("workload keepalive disabled: missing WORKLOAD_ID")
-		return
 	}
-
-	if _, err := d.touchActiveWorkload(ctx, workloadID); err != nil && ctx.Err() == nil {
-		log.Printf("workload keepalive failed: %v", err)
+	touch := func() {
+		if workloadID == "" {
+			return
+		}
+		if _, err := d.touchActiveWorkload(ctx, workloadID); err != nil && ctx.Err() == nil {
+			log.Printf("workload keepalive failed: %v", err)
+		}
 	}
+	touch()
 
-	ticker := time.NewTicker(workloadKeepaliveInterval)
+	interval := d.keepaliveInterval
+	if interval <= 0 {
+		interval = workloadKeepaliveInterval
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+
+	watch := newWakeWatch(d.clocks)
+	woken := func(cause string) {
+		// Idempotent, and coalesced: the runner signals twice, the clock
+		// confirms what the signal announced, and each repeat finds the wake
+		// already handled. One pending inbox read is as good as any number.
+		if !watch.admit() {
+			log.Printf("wake by %s repeats one already handled", cause)
+			return
+		}
+		log.Printf("woken from hibernation by %s; reopening the subscription and reading the inbox", cause)
+		// Every connection is dead on the far side. The stream is the one
+		// that would otherwise wait on its dead peer until TCP gave up, so it
+		// is dropped and reopened; the unary calls fail and reconnect on their
+		// own. What arrived while the workload slept is in the inbox, which
+		// Run reads once asked. A turn in flight gets its keepalive now rather
+		// than at the next tick. Nothing is replayed to the agent CLI.
+		d.subscriber.Resubscribe()
+		select {
+		case d.wakeSync <- struct{}{}:
+		default:
+		}
+		touch()
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-d.processingWake:
-			if _, err := d.touchActiveWorkload(ctx, workloadID); err != nil && ctx.Err() == nil {
-				log.Printf("workload keepalive failed: %v", err)
-			}
+			touch()
+		case <-wake:
+			woken("signal")
 		case <-ticker.C:
-			if _, err := d.touchActiveWorkload(ctx, workloadID); err != nil && ctx.Err() == nil {
-				log.Printf("workload keepalive failed: %v", err)
+			if jump := watch.tick(); jump > interval {
+				log.Printf("wall clock moved %s further than monotonic time between ticks", jump)
+				woken("clock")
 			}
+			touch()
 		}
 	}
 }

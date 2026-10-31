@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -25,7 +26,7 @@ func TestRunHolderRunsEnvironmentInitScripts(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	errCh := make(chan error, 1)
-	go func() { errCh <- runHolder(ctx, fake, "env-1", workDir) }()
+	go func() { errCh <- runHolder(ctx, nil, fake, "env-1", workDir) }()
 
 	waitForFile(t, errCh, filepath.Join(workDir, "installed.txt"))
 
@@ -64,7 +65,7 @@ func TestRunHolderWithoutEnvironmentSkipsInitScripts(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
-	go func() { errCh <- runHolder(ctx, fake, "", t.TempDir()) }()
+	go func() { errCh <- runHolder(ctx, nil, fake, "", t.TempDir()) }()
 
 	time.Sleep(50 * time.Millisecond)
 	cancel()
@@ -87,9 +88,40 @@ func TestRunHolderFailsWhenInitScriptsCannotBeFetched(t *testing.T) {
 	listErr := errors.New("gateway unavailable")
 	fake := &fakeInitScriptsClient{err: listErr}
 
-	err := runHolder(context.Background(), fake, "env-1", t.TempDir())
+	err := runHolder(context.Background(), nil, fake, "env-1", t.TempDir())
 	if !errors.Is(err, listErr) {
 		t.Fatalf("expected the list error, got %v", err)
+	}
+}
+
+// A wake is nothing to a sandbox: no subscription to reopen, no turn to keep
+// alive. The holder takes the signal and holds on.
+func TestRunHolderHoldsThroughWake(t *testing.T) {
+	stubHolderChdir(t)
+	wake := make(chan os.Signal, 1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- runHolder(ctx, wake, &fakeInitScriptsClient{}, "", t.TempDir()) }()
+
+	// The second send only lands once the holder has taken the first.
+	wake <- syscall.SIGCONT
+	select {
+	case wake <- syscall.SIGCONT:
+	case err := <-errCh:
+		t.Fatalf("holder returned on wake: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("holder did not take the wake")
+	}
+
+	cancel()
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("holder did not stop after cancellation")
 	}
 }
 

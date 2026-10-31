@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 	"testing"
 	"time"
 
@@ -192,6 +193,136 @@ func TestSubscriberWithoutThreadWakesOnAnyThread(t *testing.T) {
 
 	cancel()
 	close(responses)
+	waitForRun(t, done)
+}
+
+// A stream whose Recv ends with its context, as a gRPC stream's does.
+type wakeStream struct {
+	done      <-chan struct{}
+	responses chan *notificationsv1.SubscribeResponse
+}
+
+func (s *wakeStream) Recv() (*notificationsv1.SubscribeResponse, error) {
+	select {
+	case <-s.done:
+		return nil, context.Canceled
+	case resp := <-s.responses:
+		return resp, nil
+	}
+}
+
+type wakeNotifications struct {
+	mu       sync.Mutex
+	streams  []*wakeStream
+	failures int // subscribe attempts that fail before one succeeds
+	attempts int
+}
+
+func (f *wakeNotifications) Subscribe(ctx context.Context) (platform.SubscribeStream, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.attempts++
+	if f.failures > 0 {
+		f.failures--
+		return nil, errors.New("gateway unavailable")
+	}
+	stream := &wakeStream{done: ctx.Done(), responses: make(chan *notificationsv1.SubscribeResponse, 1)}
+	f.streams = append(f.streams, stream)
+	return stream, nil
+}
+
+func (f *wakeNotifications) Streams() []*wakeStream {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]*wakeStream(nil), f.streams...)
+}
+
+func (f *wakeNotifications) Attempts() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.attempts
+}
+
+// Resubscribe ends the stream and Run reopens it at once: the drop is the
+// daemon's own, after a wake from hibernation, not a failure to back off from.
+func TestSubscriberResubscribeReopensStream(t *testing.T) {
+	client := &wakeNotifications{}
+	sub := New(client, "")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- sub.Run(ctx)
+	}()
+
+	select {
+	case <-sub.Ready():
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected the first stream")
+	}
+	sub.Resubscribe()
+
+	// Well inside the first backoff, which a deliberate drop does not wait.
+	deadline := time.After(500 * time.Millisecond)
+	for len(client.Streams()) < 2 {
+		select {
+		case <-deadline:
+			t.Fatalf("expected a second stream, got %d", len(client.Streams()))
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	streams := client.Streams()
+	select {
+	case <-streams[0].done:
+	default:
+		t.Fatal("expected the first stream to be dropped")
+	}
+
+	streams[1].responses <- makeMessageCreated("1f5a4e5c-350a-4f3a-8dda-0ef049b89d09")
+	select {
+	case <-sub.Wake():
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected a wake from the reopened stream")
+	}
+
+	cancel()
+	waitForRun(t, done)
+}
+
+// A wake can land while the subscriber is waiting out a failure. The wait is
+// for the failure, and the wake is not one: Resubscribe cuts it short and the
+// stream is opened at once.
+func TestSubscriberResubscribeCutsTheBackoffShort(t *testing.T) {
+	client := &wakeNotifications{failures: 1}
+	sub := New(client, "")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- sub.Run(ctx)
+	}()
+
+	deadline := time.After(500 * time.Millisecond)
+	for client.Attempts() < 1 {
+		select {
+		case <-deadline:
+			t.Fatal("expected the first subscribe attempt")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	// Now inside the one-second backoff the failure earned.
+	sub.Resubscribe()
+
+	select {
+	case <-sub.Ready():
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected the stream opened at once, got %d attempts", client.Attempts())
+	}
+	if got := client.Attempts(); got != 2 {
+		t.Fatalf("expected the retry to be the second attempt, got %d", got)
+	}
+
+	cancel()
 	waitForRun(t, done)
 }
 
