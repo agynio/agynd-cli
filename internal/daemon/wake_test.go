@@ -61,10 +61,7 @@ func TestWakeWatchAdmitFoldsRepeatsOfAWake(t *testing.T) {
 		clockReading{wall: wallAt(0), mono: 0},
 		clockReading{wall: wallAt(time.Hour), mono: time.Second},
 		clockReading{wall: wallAt(time.Hour + 3*time.Second), mono: 4 * time.Second},
-		clockReading{wall: wallAt(time.Hour + wakeRepeatWindow - time.Millisecond), mono: 5 * time.Second},
-		clockReading{wall: wallAt(time.Hour + wakeRepeatWindow), mono: 6 * time.Second},
-		clockReading{wall: wallAt(time.Hour + wakeRepeatWindow + time.Second), mono: 7 * time.Second},
-		clockReading{wall: wallAt(time.Minute), mono: 8 * time.Second},
+		clockReading{wall: wallAt(time.Hour + time.Minute), mono: 61 * time.Second},
 	))
 	if !watch.admit() {
 		t.Fatal("expected the first wake admitted")
@@ -73,13 +70,40 @@ func TestWakeWatchAdmitFoldsRepeatsOfAWake(t *testing.T) {
 		t.Fatal("expected the signal's repeat folded into the wake")
 	}
 	if watch.admit() {
-		t.Fatal("expected a repeat at the edge of the window folded into the wake")
+		t.Fatal("expected a sign with no sleep behind it folded into the wake, however late")
+	}
+}
+
+// A turn can start, end and hibernate again in seconds, so the next wake can
+// follow closely on the wall clock. The sleep between them is what makes it a
+// wake of its own, and missing it would leave the message that caused it unread.
+func TestWakeWatchAdmitsAWakeSoonAfterTheLast(t *testing.T) {
+	watch := newWakeWatch(scriptedClocks(
+		clockReading{wall: wallAt(0), mono: 0},
+		clockReading{wall: wallAt(time.Hour), mono: time.Second},
+		// Five seconds of running, then a sleep of five.
+		clockReading{wall: wallAt(time.Hour + 10*time.Second), mono: 6 * time.Second},
+		clockReading{wall: wallAt(time.Hour + 13*time.Second), mono: 9 * time.Second},
+	))
+	if !watch.admit() {
+		t.Fatal("expected the first wake admitted")
 	}
 	if !watch.admit() {
-		t.Fatal("expected a wake at the end of the window admitted")
+		t.Fatal("expected a wake ten seconds after the last admitted, a sleep lying between them")
 	}
 	if watch.admit() {
 		t.Fatal("expected a repeat of the second wake folded into it")
+	}
+}
+
+func TestWakeWatchAdmitsAWakeBehindAClockSteppedBack(t *testing.T) {
+	watch := newWakeWatch(scriptedClocks(
+		clockReading{wall: wallAt(0), mono: 0},
+		clockReading{wall: wallAt(time.Hour), mono: time.Second},
+		clockReading{wall: wallAt(time.Minute), mono: 2 * time.Second},
+	))
+	if !watch.admit() {
+		t.Fatal("expected the first wake admitted")
 	}
 	if !watch.admit() {
 		t.Fatal("expected a wake behind a wall clock stepped back admitted")
@@ -325,7 +349,8 @@ func TestRunClockJumpWakes(t *testing.T) {
 		t.Fatalf("expected one resubscribe for the jump, got %d", got)
 	}
 
-	clocks.sleep(time.Hour)
+	// A sleep shorter than a tick is a sleep all the same.
+	clocks.sleep(wakeSleepFloor)
 	waitForSyncCalls(t, errCh, consumer.Calls, 3, "the clock jumped again")
 	if got := subscriber.resubscribed.Load(); got != 2 {
 		t.Fatalf("expected a second resubscribe for a second sleep, got %d", got)

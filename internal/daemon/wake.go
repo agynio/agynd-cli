@@ -13,14 +13,11 @@ import "time"
 // length of the sleep. The signal makes the wake prompt; the clock makes it
 // certain.
 
-// wakeRepeatWindow is how long after a handled wake another sign of one counts
-// as a repeat of it rather than a wake of its own. The runner's second signal
-// follows its first by a few seconds and the clock is read once a tick; two
-// ticks cover both with room for a late tick. It is measured on the wall
-// clock, which unlike the monotonic one moves across a sleep, so two wakes
-// with a sleep between them are never taken for one however close together
-// they are in running time.
-const wakeRepeatWindow = 2 * workloadKeepaliveInterval
+// wakeSleepFloor is how far the wall clock has to get ahead of the monotonic one
+// to mean a sleep. It clears a clock's ordinary corrections and stays under the
+// shortest sleep there is: freezing a guest, snapshotting it and restoring it
+// take seconds.
+const wakeSleepFloor = time.Second
 
 // clockReading is one look at both clocks: the wall clock, which the runner
 // sets, and the monotonic clock, which sleeps through a pause.
@@ -45,7 +42,8 @@ func readClocks() clockReading {
 type wakeWatch struct {
 	clocks  func() clockReading
 	last    clockReading
-	handled time.Time
+	handled clockReading
+	woken   bool
 }
 
 func newWakeWatch(clocks func() clockReading) *wakeWatch {
@@ -66,14 +64,20 @@ func (w *wakeWatch) tick() time.Duration {
 }
 
 // admit reports whether a sign of a wake is a wake of its own rather than a
-// repeat of the last one handled, and counts it as handled when it is.
+// repeat of the last one handled, and counts it as handled when it is. Every
+// wake has a sleep behind it, and that is the only thing that tells them apart:
+// the signs of one wake have none between them however far apart they come, and
+// two wakes have one however close together, since a turn can start, end and
+// hibernate again inside a few seconds. A wall clock stepped back says nothing
+// about a sleep, and an extra inbox read costs little, so it counts as a wake.
 func (w *wakeWatch) admit() bool {
 	now := w.clocks()
-	if !w.handled.IsZero() {
-		if since := now.wall.Sub(w.handled); since >= 0 && since < wakeRepeatWindow {
+	if w.woken {
+		apart := now.wall.Sub(w.handled.wall) - (now.mono - w.handled.mono)
+		if apart.Abs() < wakeSleepFloor {
 			return false
 		}
 	}
-	w.handled = now.wall
+	w.woken, w.handled = true, now
 	return true
 }
