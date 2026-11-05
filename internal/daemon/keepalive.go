@@ -76,7 +76,7 @@ func (d *Daemon) runKeepalive(ctx context.Context, wake <-chan os.Signal) {
 		case <-wake:
 			woken("signal")
 		case <-ticker.C:
-			if jump := watch.tick(); jump > interval {
+			if jump := watch.tick(); jump >= wakeSleepFloor {
 				log.Printf("wall clock moved %s further than monotonic time between ticks", jump)
 				woken("clock")
 			}

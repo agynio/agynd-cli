@@ -39,6 +39,7 @@ func New(client notificationsClient, threadID string) *Subscriber {
 func (s *Subscriber) Run(ctx context.Context) error {
 	s.startOnce.Do(func() { close(s.started) })
 	backoff := time.Second
+	reopened := false
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -61,6 +62,13 @@ func (s *Subscriber) Run(ctx context.Context) error {
 		}
 		s.readyOnce.Do(func() { close(s.ready) })
 		backoff = time.Second
+		// Whatever was published while the stream was down was announced to
+		// nobody. The first stream has nothing before it: the daemon's initial
+		// read covers that.
+		if reopened {
+			s.signalWake()
+		}
+		reopened = true
 
 		for {
 			resp, err := stream.Recv()
@@ -101,11 +109,15 @@ func (s *Subscriber) Run(ctx context.Context) error {
 			if s.threadID != "" && (!ok || payloadThreadID != s.threadID) {
 				continue
 			}
-			select {
-			case s.wake <- struct{}{}:
-			default:
-			}
+			s.signalWake()
 		}
+	}
+}
+
+func (s *Subscriber) signalWake() {
+	select {
+	case s.wake <- struct{}{}:
+	default:
 	}
 }
 
