@@ -31,7 +31,7 @@ func TestWriteClaudeSettingsNativeOmitsEndpoint(t *testing.T) {
 	if _, ok := settings.Env["ANTHROPIC_BASE_URL"]; ok {
 		t.Fatal("native settings carry a base URL")
 	}
-	if _, ok := settings.Env["ANTHROPIC_API_KEY"]; ok {
+	if _, ok := settings.Env["ANTHROPIC_AUTH_TOKEN"]; ok {
 		t.Fatal("native settings carry a credential")
 	}
 	// The whole point of still writing the file.
@@ -69,7 +69,7 @@ func TestWriteClaudeSettingsPlatformKeepsEndpoint(t *testing.T) {
 	if settings.Env["ANTHROPIC_BASE_URL"] != "http://llm-proxy.agyn:443" {
 		t.Fatalf("platform settings lost the base URL: %+v", settings.Env)
 	}
-	if settings.Env["ANTHROPIC_API_KEY"] != "token" {
+	if settings.Env["ANTHROPIC_AUTH_TOKEN"] != "token" {
 		t.Fatalf("platform settings lost the credential: %+v", settings.Env)
 	}
 }
