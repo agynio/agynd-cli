@@ -278,11 +278,53 @@ func TestSubscriberResubscribeReopensStream(t *testing.T) {
 		t.Fatal("expected the first stream to be dropped")
 	}
 
+	// The reopening itself asks for an inbox read; after that the stream
+	// carries messages as the first one did.
+	select {
+	case <-sub.Wake():
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected a wake for the reopening")
+	}
 	streams[1].responses <- makeMessageCreated("1f5a4e5c-350a-4f3a-8dda-0ef049b89d09")
 	select {
 	case <-sub.Wake():
 	case <-time.After(200 * time.Millisecond):
 		t.Fatal("expected a wake from the reopened stream")
+	}
+
+	cancel()
+	waitForRun(t, done)
+}
+
+// A message published while the stream was down was announced to nobody, so a
+// stream that reopens asks for an inbox read. The first stream has nothing
+// before it and does not.
+func TestSubscriberReopenedStreamAsksForAnInboxRead(t *testing.T) {
+	client := &wakeNotifications{}
+	sub := New(client, "")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- sub.Run(ctx)
+	}()
+
+	select {
+	case <-sub.Ready():
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected the first stream")
+	}
+	select {
+	case <-sub.Wake():
+		t.Fatal("expected no wake for the first stream")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	sub.Resubscribe()
+	select {
+	case <-sub.Wake():
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected a wake for the reopened stream")
 	}
 
 	cancel()
